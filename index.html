@@ -1,0 +1,1435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- [RESPONSIVE] Mobile viewport: lock scale, allow no user-zoom (canvas handles pinch) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>APR_OS // CV</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      /* [TOUCH] Prevent browser pull-to-refresh and overscroll bounce */
+      overscroll-behavior: none;
+      background: #000;
+    }
+    canvas {
+      display: block;
+      /* [TOUCH] Critical: hand all touch events to JS, prevent browser pan/zoom */
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+  </style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// noprotect
+// =========================================================================
+// ORGANIC MORPH RIG V19.5.2-CV — RESPONSIVE + TOUCH EDITION
+// Antonio Pineda Ramos — Head Chef · Creative Freelancer · Full Stack Dev
+//
+// [CHANGES v19.5.2]
+// + RS: Responsive State system — viewport detection, rig scaling, font sizes
+// + Ptr: Unified pointer layer — normalises mouse + touch into one stream
+// + TOTAL_SCALE (RS.rigScale × rigZoom): scale() applied inside rig push/pop
+//   so blob, handles, grid and panels all scale uniformly; hit detection
+//   uses getRigMouse() which divides by TOTAL_SCALE automatically
+// + rigZoom / rigZoomTarget: pinch-to-zoom (RIG_ZOOM_MIN – RIG_ZOOM_MAX)
+// + touchStarted / touchMoved / touchEnded: full gesture support
+//     - single tap   → equivalent to click  (_handlePointerDown)
+//     - single drag  → handle drag, block drag, sub-handle drag
+//     - double-tap   → equivalent to doubleClicked  (_handlePointerDoubleTap)
+//     - two-finger pinch → zoom rig in/out
+// + Extended hit areas (RS.hitExtra) for touch ergonomics on all interactives
+// + Adaptive bottom-menu: RS.menuFontSize, RS.subFontSize, truncLabel()
+// + getHudBtnLayout(): wider tap zones on mobile for top-bar buttons
+// + drawNeuralGrid: extends to full scaled viewport (no blank edges on mobile)
+// + updateAndDrawBlocks: screen coords multiplied by TOTAL_SCALE
+// + CursorTrail.update: blob attraction point in screen space uses TOTAL_SCALE
+// + drawTelemetryHUD: handle position in screen space uses TOTAL_SCALE
+// + windowResized: calls updateResponsiveMetrics + re-clamps off-screen blocks
+// * FIX: Removed duplicate getMenuLayout() — single canonical version
+// =========================================================================
+'use strict';
+
+// ─── I18N ────────────────────────────────────────────────────────────────────
+let currentLang = 'EN';
+let P_LABELS, SUB_MENU_MAP, SECTION_DATABASE, RIG_TELEMETRY, UI_STR;
+
+const I18N = {
+  EN: {
+    LABELS: ['IDENTITY','EXPERIENCE','SKILLS','TECH','SPORT','EDUCATION','CONTACT','SYSTEM'],
+    SUBS:[
+      ['PROFILE','PHILOSOPHY','LANGUAGES'],
+      ['PORTLAND','FREELANCE','ISATIS_CO'],
+      ['KITCHEN','MANAGEMENT','CREATIVE'],
+      ['FRONTEND','UX_DESIGN','PROJECTS'],
+      ['SWIMMING','CYCLING','TRIATHLON'],
+      ['BOOTCAMP','BFA_DEGREE','PHOTO_CERT'],
+      ['EMAIL_LINK','LOCATION','AVAILABLE'],
+      ['TELEMETRY','GLITCH_MODE','SYSTEM_RESET']
+    ],
+    DB:{
+      'PROFILE':     [{m:'// IDENTITY.CORE_DATA',    d:'ID: ANTONIO_PINEDA_RAMOS\nROLES: CHEF+DEV+ARTIST\nBASE: VALENCIA_ES\nSTATUS: OPEN_TO_WORK'},
+                      {m:'// IDENTITY.BIO_LINK',     d:'TEL: +34_639_43_85_27\nEMAIL: ANPIRA@GMAIL.COM\nSPEC: TECH+FOOD+ART\nTZ: UTC+1_CET'}],
+      'PHILOSOPHY':  [{m:'// MIND.MANIFESTO',        d:'CODE_IS_CRAFT\nFOOD_IS_ART\nDISCIPLINE_IS_KEY\nUSER_IS_CENTER'},
+                      {m:'// MIND.APPROACH',         d:'LENS: MULTIDISCIPLINARY\nMETHOD: ITERATIVE\nDRIVE: EXCELLENCE\nVISION: BUILD_THE_UNSEEN'}],
+      'LANGUAGES':   [{m:'// LANG.PROFILE',          d:'SPANISH: C2_NATIVE\nENGLISH: C1_ADVANCED\nFRENCH: A2_GROWING\nCOMM: INTL_READY'},
+                      {m:'// LANG.CONTEXT',          d:'ES: FULL_PROFICIENCY\nEN: PROFESSIONAL_USE\nFR: CASUAL_EXCHANGE\nDOCS: TECH_NATIVE'}],
+      'PORTLAND':    [{m:'// WORK.PORTLAND_ALE',     d:'ROLE: HEAD_CHEF\nORG: PORTLAND_ALE_HOUSE\nPERIOD: 2016-CURRENT\nSTYLE: CA_BAR_FOOD'},
+                      {m:'// WORK.PORTLAND.OPS',     d:'TEAM: FULL_MANAGEMENT\nINVENTORY: CONTROLLED\nCOSTS: OPTIMIZED\nQUALITY: CONSISTENT'}],
+      'FREELANCE':   [{m:'// WORK.FREELANCE',        d:'ROLE: CREATIVE_FREELANCER\nPERIOD: 2020-CURRENT\nBASE: VALENCIA_ES\nMODE: AUTONOMOUS'},
+                      {m:'// WORK.FREELANCE.OPS',    d:'EXH: 3_SOLO_SHOWS\nCLIENTS: MULTI_SECTOR\nDELIV: ON_TIME_ALWAYS\nAPPRO: USER_CENTRIC'}],
+      'ISATIS_CO':   [{m:'// WORK.ISATIS_SL',        d:'COMPANY: ISATIS_SL\nROLE: VISUAL_ARTIST\nPERIOD: 2018-2020\nTYPE: CREATIVE'},
+                      {m:'// WORK.ISATIS.SKILLS',    d:'THEORY: COLOR+LIGHTING\nTEAM: MULTIDISCIP\nOUT: VISUAL_SYSTEMS\nIMPACT: HIGH'}],
+      'KITCHEN':     [{m:'// SKILLS.KITCHEN',        d:'GRILL: PROFESSIONAL\nPLANCHA: EXPERT\nSAUCES: CREATIVE\nPRODUCTION: HIGH_VOL'},
+                      {m:'// SKILLS.KITCHEN.OPS',    d:'MISE_EN_PLACE: SYSTEM\nORGANIZATION: OPTIMAL\nQUALITY: CONSISTENT\nPRESENT: VISUAL'}],
+      'MANAGEMENT':  [{m:'// SKILLS.MANAGEMENT',     d:'COSTS: CTRL+OPTIMIZE\nINVENTORY: STOCK_MGMT\nTEAM: TRAIN+LEAD\nPLAN: STRATEGIC'},
+                      {m:'// SKILLS.MGMT.CONTEXT',   d:'PRESSURE: HIGH_VOLUME\nKPIs: PERFORMANCE\nSOLVING: FAST_ADAPT\nSAFETY: FOOD_HYGIENE'}],
+      'CREATIVE':    [{m:'// SKILLS.CREATIVE',       d:'ART: FINE_ARTS_UPV\nDESIGN: VISUAL_SYS\nPHOTO: ANALOG+DIGITAL\nCONCEPT: NARRATIVE'},
+                      {m:'// SKILLS.CREATIVE.APPLY', d:'UI_UX: DECISIONS\nVISUAL: BRAND_THINK\nUSER: CENTERED\nINNOV: BUILD_UNSEEN'}],
+      'FRONTEND':    [{m:'// TECH.FRONTEND',         d:'STACK: JS+REACT+HTML\nCSS: RESPONSIVE_UI\nAPI: REST_INTEG\nVIZ: P5JS+CANVAS'},
+                      {m:'// TECH.FRONT.DEEP',       d:'JS: ES6+_VANILLA\nNODE: EXPRESS_ENV\nDB: MYSQL_RELAT\nGIT: ATOMIC_COMMITS'}],
+      'UX_DESIGN':   [{m:'// TECH.UX_DESIGN',        d:'APPROACH: EXPERIMENTAL\nSYSTEM: ORGANIC_UI\nNARR: INTERFACE\nBLOB: LIVING_ENTITY'},
+                      {m:'// TECH.UX.METHOD',        d:'PHYS: SPRING_MASS\nINTER: GESTURE_DRIV\nSTORY: DISCOVERY_UX\nINNOV: GENERATIVE'}],
+      'PROJECTS':    [{m:'// TECH.PROJECTS',         d:'BLOB_OS: LIQUID_UI\nCV_INTER: THIS_FILE\nVIS_GEN: CREAT_CODE\nDATA_EXP: REACTIVE'},
+                      {m:'// TECH.PROJ.STACK',       d:'ENGINE: P5JS_VANILLA\nPHYS: TENSOR_FIELD\nNOISE: PERLIN_3D\nFPS: 60_TARGET'}],
+      'SWIMMING':    [{m:'// SPORT.SWIMMING',        d:'DISCIPLINE: SWIMMING\nTYPE: CROSS_TRAINING\nBENEFIT: ENDURANCE\nFREQ: REGULAR'},
+                      {m:'// SPORT.SWIM.MINDSET',    d:'FOCUS: TECHNIQUE\nMIND: CONSISTENCY\nGOAL: PERFORMANCE\nAPPLIES: WORK_ETHIC'}],
+      'CYCLING':     [{m:'// SPORT.CYCLING',         d:'DISCIPLINE: ROAD_CYCLE\nTYPE: ENDURANCE\nROUTES: VLNCIA_AREA\nFREQ: WEEKLY'},
+                      {m:'// SPORT.CYCLE.CONTEXT',   d:'POWER: GRADUAL_BUILD\nRESIL: MENTAL\nCONSIST: KEY\nMETRICS: TRACKED'}],
+      'TRIATHLON':   [{m:'// SPORT.TRIATHLON',       d:'DISCIPLINE: TRI_EVENTS\nCOMPS: PARTICIPATED\nDIST: SPRINT+OLYMPIC\nGOAL: CONTINUOUS'},
+                      {m:'// SPORT.TRI.MINDSET',     d:'TRAIN: SWIM+BIKE+RUN\nRESIL: TESTED\nCAP: HIGH_PERFORM\nMINDSET: GROWTH'}],
+      'BOOTCAMP':    [{m:'// EDU.BOOTCAMP',          d:'SCHOOL: THE_BRIDGE\nFORMAT: ONLINE_INTENS\nPERIOD: 2023-2024\nDUR: 12_MONTHS'},
+                      {m:'// EDU.BOOT.STACK',        d:'CERT: FULL_STACK_MERN\nSTATUS: COMPLETED_OK\nSKILLS: REACT+NODE\nGRADE: DISTINCTION'}],
+      'BFA_DEGREE':  [{m:'// EDU.BFA',               d:'SCHOOL: UPV_VALENCIA\nDEGREE: FINE_ARTS\nPERIOD: 2008-2011\nSPEC: VISUAL_SYS'},
+                      {m:'// EDU.BFA.FOCUS',         d:'LENS: VISUAL_SYSTEMS\nAPPRO: CONCEPTUAL\nBASE: CREATIVE_LOGIC\nAPPLIED: TECH+ART'}],
+      'PHOTO_CERT':  [{m:'// EDU.PHOTOGRAPHY',       d:'SCHOOL: ESAD_VALENCIA\nDIPLOMA: PHOTOGRAPHY\nPERIOD: 2006-2008\nLVL: ADVANCED'},
+                      {m:'// EDU.PHOTO.DETAIL',      d:'EYE: VISUAL_NARRAT\nTECH: ANALOG+DIGITAL\nCERT: ADVANCED_LVL\nAPPLIED: UI_VISUAL'}],
+      'EMAIL_LINK':  [{m:'// CONTACT.EMAIL',         d:'ADDR: ANPIRA@GMAIL.COM\nSECURE: TLS_ENABLED\nSTATUS: INBOX_OPEN\nRPLY: WITHIN_24H'},
+                      {m:'// CONTACT.COMM',          d:'PREF: EMAIL_FIRST\nLANG: ES // EN // FR\nMEET: ON_REQUEST\nTZ: UTC+1_CET'}],
+      'LOCATION':    [{m:'// CONTACT.LOCATION',      d:'CITY: VALENCIA_ES\nTIMEZONE: UTC+1_CET\nTEL: +34_639_43_85_27\nREMOTE: YES'},
+                      {m:'// CONTACT.AVAIL',         d:'REMOTE: FULLY_CAPABLE\nONSITE: VALENCIA_AREA\nSTART: IMMEDIATELY\nHYBRID: PREFERRED'}],
+      'AVAILABLE':   [{m:'// STATUS.WORK',           d:'STATE: OPEN_TO_WORK\nTYPE: FULL_TIME_PREF\nSTART: ASAP_READY\nRES: CHEF+DEV+ART'},
+                      {m:'// STATUS.TARGET',         d:'ROLE: CHEF_OR_DEV\nENV: CREATIVE+TECH\nBONUS: MULTIDISC\nCOLLAB: TEAM_PLAYER'}],
+      'TELEMETRY':   [{m:'// SYS.TELEMETRY',         d:'EXP: 8+_YRS_KITCHEN\nPROJ: 5+_TECH_PROJ\nEXHIB: 3_SOLO_SHOWS\nSPORT: 3_DISC'},
+                      {m:'// SYS.METRICS',           d:'LANGS: ES+EN+FR\nFRAME: REACT+P5JS\nDB: MYSQL+NODE\nTOOLS: GIT+FIGMA'}],
+      'GLITCH_MODE': [{m:'// SYS.CORRUPTION',        d:'PROBABILITY: 85.3%\nBUFFER_OVF: SIMULATED\nVIDEO_MEM: JITTER\nSYNC: BROKEN'},
+                      {m:'// SYS.ANOMALY',           d:'FRAME_DROP: STOCHAST\nMATRIX_ALIGN: FALSE\nSYNC_PULSE: BROKEN\nINTG: 62.7%'}],
+      'SYSTEM_RESET':[{m:'// SYS.REBOOT_SEQ',        d:'TEARDOWN: MEM_CLEAN\nALLOC: INITIAL_STATE\nCACHE: FLUSH_ON_EXIT\nORBIT: RESTORE'},
+                      {m:'// SYS.RECOVERY',          d:'RESTORE: V1.0_BASE\nBOOT: WAITING_SIGNAL\nINTEGRITY: IDLE\nSIG: STANDBY'}]
+    },
+    TELEMETRY: {
+      'MORPH_SPEED':     { name:'MORPH_KINETICS',      fn:'Base speed of orbital anchors.',      phys:'Kinetic friction & transition pacing.',   zone:'Global System',  syn:'Synergizes with LIQUID_VISCOSITY.' },
+      'LIQUID_VISCOSITY':{ name:'VISCOELASTIC_DRAG',   fn:'Resistance to internal flow.',        phys:'Surface relaxation & mass retention.',   zone:'Blob Core',      syn:'Counters GRAVITY_WELL.' },
+      'PULSE_FREQ':      { name:'RESONANCE_FREQ',      fn:'Heartbeat of the central entity.',    phys:'Radial displacement over time.',          zone:'Core & Ripples', syn:'Multiplies PULSE_AMP.' },
+      'PULSE_AMP':       { name:'RESONANCE_AMP',       fn:'Amplitude of pulse waves.',           phys:'Expands physical boundaries.',            zone:'Core',           syn:'Multiplies PULSE_FREQ.' },
+      'NOISE_OFFSET':    { name:'STRUCTURAL_NOISE',    fn:'Perlin noise turbulence.',            phys:'Edge micro-deformations.',                zone:'Perimeter',      syn:'Affects edge smoothness.' },
+      'GRAVITY_WELL':    { name:'GRAV_ATTRACTION',     fn:'Inward pull towards the core.',       phys:'Mass compression.',                       zone:'Regional',       syn:'Alters PARTICLE_DENSITY.' },
+      'PARTICLE_DENSITY':{ name:'MATTER_DENSITY',      fn:'Thickness of the liquid.',            phys:'Light occlusion & depth.',                zone:'Core Layers',    syn:'Synergizes with LIQUID_VISCOSITY.' },
+      'STIFFNESS':       { name:'TENSION_STIFFNESS',   fn:'Mesh rigidity.',                      phys:'Resistance to handle pull.',              zone:'Global Mesh',    syn:'Limits Deformation Radius.' }
+    },
+    UI:{ sysNode:'SYS_NODE',pwr:'PWR',func:'FUNC',phys:'PHYS',zone:'ZONE',sync:'SYNC',
+         explore:'> EXPLORE THE NETWORK',standby:'STANDBY',deployed:'DEPLOYED',
+         lockOn:'LOCK:ON',volatile:'VOLATILE',dblHint:'DBL-CLICK TO EXPAND',closePanel:'x CLOSE' }
+  }
+};
+
+const ES_TO_EN_KEY = {
+  'PERFIL':'PROFILE','SOBRE_MI':'ABOUT_ME','FILOSOFIA':'PHILOSOPHY','DOCENCIA':'TEACHING',
+  'KIT_CREATIVO':'CREATIVE_KIT','GRADO_BBAA':'BFA_DEGREE','CERT_FOTO':'PHOTO_CERT',
+  'LINK_EMAIL':'EMAIL_LINK','UBICACION':'LOCATION','DISPONIBLE':'AVAILABLE',
+  'INGLES_C1':'ENGLISH_C1','FRANCES_A2':'FRENCH_A2','ESPANOL_C2':'SPANISH_C2',
+  'GENERATIVO':'GENERATIVE','TRABAJO_WEBGL':'WEBGL_WORK','REPOS_GIT':'GIT_REPOS',
+  'RIG_ESTABLE':'STABLE_RIG','MODO_GLITCH':'GLITCH_MODE','RESETEO_SIS':'SYSTEM_RESET'
+};
+
+function resolveDbKey(label){
+  if(SECTION_DATABASE[label])return label;
+  const enKey=ES_TO_EN_KEY[label];
+  if(enKey&&I18N['EN'].DB[enKey])return enKey;
+  return null;
+}
+function setLanguage(lang){
+  currentLang=lang;const dict=I18N[lang]||I18N['EN'];
+  P_LABELS=dict.LABELS;SUB_MENU_MAP=dict.SUBS;SECTION_DATABASE=dict.DB;RIG_TELEMETRY=dict.TELEMETRY;UI_STR=dict.UI;
+  if(handles&&handles.length>0){
+    for(let i=0;i<handles.length;i++){
+      handles[i].label=P_LABELS[i];
+      for(let j=0;j<handles[i].subHandles.length;j++)handles[i].subHandles[j].label=SUB_MENU_MAP[i][j];
+    }
+  }
+  if(currentActiveMenuIdx!==-1)resetToCenter();
+}
+
+// ─── PREMIUM COLOR SYSTEM ────────────────────────────────────────────────────
+let isNightMode=true;
+const THEMES={
+  dark:{bg:[240,10,6],grid:[240,10,12],panelBg:[240,10,10],border:[240,10,20],textMuted:[240,5,60],textActive:[0,0,100]},
+  light:{bg:[40,2,98],grid:[40,2,90],panelBg:[0,0,100],border:[40,5,85],textMuted:[240,5,45],textActive:[240,10,15]}
+};
+function getPremiumColor(el,a=100){const t=isNightMode?THEMES.dark:THEMES.light;return color(t[el][0],t[el][1],t[el][2],a);}
+function getDynamicAccent(h,a=100){return isNightMode?color(h,80,100,a):color(h,50,75,a);}
+function applyPremiumShadow(intensity){
+  if(intensity<=0.01){drawingContext.shadowBlur=0;drawingContext.shadowOffsetY=0;return;}
+  if(isNightMode){drawingContext.shadowBlur=12*intensity;drawingContext.shadowColor=`rgba(0,229,255,${0.15*intensity})`;drawingContext.shadowOffsetY=0;}
+  else{drawingContext.shadowBlur=12*intensity;drawingContext.shadowOffsetY=4*intensity;drawingContext.shadowColor=`rgba(0,0,0,${0.08*intensity})`;}
+}
+function setTacticalGlow(hsbArr,intensity){
+  if(intensity<=0.01){drawingContext.shadowBlur=0;drawingContext.shadowOffsetY=0;return;}
+  const c=color(hsbArr[0],hsbArr[1],hsbArr[2]);
+  if(isNightMode){drawingContext.shadowBlur=15*intensity;drawingContext.shadowColor=c.toString();drawingContext.shadowOffsetY=0;}
+  else{drawingContext.shadowBlur=10*intensity;drawingContext.shadowOffsetY=3*intensity;drawingContext.shadowColor=`rgba(0,0,0,${0.15*intensity})`;}
+}
+
+// ─── PHYSICS CONSTANTS ───────────────────────────────────────────────────────
+const HANDLE_CFG={INFLUENCE_STRENGTH:160,DEFORMATION_RADIUS:320,MASS_TRANSFER:1.6,ORGANIC_RESPONSE:0.10};
+const MOCK_MIN_DISTANCE=178,MOCK_PADDING=12,MOCK_REPULSION_FORCE=0.92,MOCK_LAYOUT_ITERATIONS=5;
+const PANEL_W_NORMAL=172,PANEL_H_MIN=62,PANEL_LINE_H=14,PANEL_HEADER_H=16,PANEL_V_PAD=10;
+const PANEL_W_EXPANDED=290,PANEL_H_EXPANDED=130,PANEL_LIFE=2400;
+const P={MORPH_SPEED:0.50,LIQUID_VISCOSITY:0.50,PULSE_FREQ:0.45,PULSE_AMP:0.40,NOISE_OFFSET:0.50,GRAVITY_WELL:0.50,PARTICLE_DENSITY:0.55,STIFFNESS:0.50};
+const P_INIT={...P};const P_KEYS=Object.keys(P);
+const H_HUES=[138,172,208,262,302,338,26,76];
+const ORBIT_CFG={RADIUS_BASE:75,SPACING_ANGULAR:0.45,OFFSET_ANGULAR:0,GROUP_PADDING:38};
+
+// ─── GLYPH ENGINE ────────────────────────────────────────────────────────────
+const GLYPH_PATHS={
+  'A':[[0,6],[2,0],[4,6],[3,6],[2.5,4],[1.5,4],[1,6]],'B':[[0,0],[3,0],[4,1.5],[3,3],[4,4.5],[3,6],[0,6]],
+  'C':[[4,1],[3,0],[1,0],[0,1],[0,5],[1,6],[3,6],[4,5],[3,4],[2,5],[1,5],[1,1],[2,1],[3,2]],
+  'E':[[0,0],[4,0],[4,1],[1,1],[1,2.5],[3,2.5],[3,3.5],[1,3.5],[1,5],[4,5],[4,6],[0,6]],
+  'F':[[0,0],[4,0],[4,1],[1,1],[1,2.5],[3,2.5],[3,3.5],[1,3.5],[1,6],[0,6]],
+  'G':[[4,1],[3,0],[1,0],[0,1],[0,5],[1,6],[3,6],[4,5],[4,3],[2,3],[2,4],[3,4],[3,5],[1,5],[1,1],[3,1]],
+  'I':[[1,0],[3,0],[3,6],[1,6]],'L':[[0,0],[1,0],[1,5],[4,5],[4,6],[0,6]],
+  'P':[[0,0],[3,0],[4,1],[4,2],[3,3],[1,3],[1,6],[0,6]],
+  'S':[[4,1],[3,0],[1,0],[0,1],[1,2],[3,3],[4,4],[3,6],[1,6],[0,5],[1,4],[3,5],[3,4],[1,3],[0,2]],
+  'T':[[0,0],[4,0],[4,1],[2.5,1],[2.5,6],[1.5,6],[1.5,1],[0,1]],
+  'W':[[0,0],[1.5,0],[2,4],[2.5,0],[4,0],[3,6],[2,2],[1,6]],
+  'O':[[1,0],[3,0],[4,1],[4,5],[3,6],[1,6],[0,5],[0,1]]
+};
+function getNormalizedGlyph(c){const p=GLYPH_PATHS[c.toUpperCase()]||GLYPH_PATHS['O'];return p.map(([x,y])=>[map(x,0,4,-0.4,0.4),map(y,0,6,-0.6,0.6)]);}
+function buildOutlinePoints(N,scale,verts){
+  const pts=verts.map(([x,y])=>({x:x*scale,y:y*scale}));
+  const segs=[];let total=0;
+  for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[(i+1)%pts.length],dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy);segs.push({a,b,dx,dy,len});total+=len;}
+  const out=[];
+  for(let i=0;i<N;i++){const t=(i/N)*total;let acc=0;
+    for(let j=0;j<segs.length;j++){const s=segs[j];if(acc+s.len>=t||j===segs.length-1){const f=s.len>0?Math.min(1,(t-acc)/s.len):0;out.push({x:s.a.x+s.dx*f,y:s.a.y+s.dy*f});break;}acc+=s.len;}}
+  return out;
+}
+function blendPoints(a,b,t){return a.map((pa,i)=>({x:lerp(pa.x,b[i].x,t),y:lerp(pa.y,b[i].y,t)}));}
+
+// ─── RESPONSIVE STATE ────────────────────────────────────────────────────────
+// RS holds all layout/scale metrics recomputed on setup and windowResized.
+const RS = {
+  rigScale:   1.0,     // scale applied to the rig push/pop block
+  isMobile:   false,
+  isTablet:   false,
+  isTouch:    false,
+  layoutMode: 'desktop', // 'mobile' | 'tablet' | 'desktop'
+  hitExtra:   0,       // extra px added to all interactive hit radii on touch
+  tapThresh:  8,       // max movement (px) for a touch to still count as a tap
+  hudH:       24,      // top bar height in px
+  menuY:      0,       // bottom menu label Y (set by updateResponsiveMetrics)
+  safeBottom: 0,       // safe-area bottom inset on mobile
+  menuFontSize: 10,    // label font size for bottom directory
+  subFontSize:  9,     // sub-item font size
+  labelMaxChars: 20,   // truncation limit for bottom menu labels
+};
+
+function isTouchDevice(){return('ontouchstart'in window)||(navigator.maxTouchPoints>0);}
+function getUILayoutMode(){if(windowWidth<600)return'mobile';if(windowWidth<1024)return'tablet';return'desktop';}
+
+// [RESPONSIVE] Recalculate all RS metrics from current viewport dimensions.
+function updateResponsiveMetrics(){
+  RS.isTouch    = isTouchDevice();
+  RS.layoutMode = getUILayoutMode();
+  RS.isMobile   = RS.layoutMode==='mobile';
+  RS.isTablet   = RS.layoutMode==='tablet';
+
+  // Scale rig so it fits inside the viewport with comfortable margins.
+  // Reference size: 900×620 is where scale = 1.0.
+  const sw = constrain(windowWidth  / 900, 0.40, 1.0);
+  const sh = constrain(windowHeight / 620, 0.40, 1.0);
+  RS.rigScale = min(sw, sh);
+
+  // Touch ergonomics
+  RS.hitExtra   = RS.isTouch ? (RS.isMobile ? 18 : 11) : 0;
+  RS.tapThresh  = RS.isTouch ? 20 : 8;
+
+  // Top bar
+  RS.hudH       = RS.isMobile ? 28 : 24;
+  RS.safeBottom = RS.isMobile ? 10 : 0;
+  RS.menuY      = windowHeight - 44 - RS.safeBottom;
+
+  // Text
+  RS.menuFontSize  = RS.isMobile ? 7.5 : (RS.isTablet ? 9 : 10);
+  RS.subFontSize   = RS.isMobile ? 7   : (RS.isTablet ? 8 : 9);
+  RS.labelMaxChars = RS.isMobile ? 6   : (RS.isTablet ? 9 : 20);
+}
+
+// [TOUCH] Truncate a label to maxLen chars (for narrow mobile columns).
+function truncLabel(label, maxLen){
+  if(maxLen>=20||label.length<=maxLen)return label;
+  return label.slice(0,maxLen-1)+'.';
+}
+
+// ─── UNIFIED POINTER INPUT ───────────────────────────────────────────────────
+// Ptr normalises mouse and touch into a single event stream.
+// Mouse handlers check Ptr.isTouch and skip if true; touch handlers call
+// the shared _handlePointer* functions which use mouseX/mouseY (p5.js sets
+// these to the first touch position automatically).
+const Ptr = {
+  isTouch:      false,  // was last interaction touch-based?
+  isDragging:   false,  // has pointer moved beyond tapThresh since press?
+  dragStartX:   0,
+  dragStartY:   0,
+  dragTotalDist:0,
+  // Multi-touch / pinch
+  touches:      [],     // snapshot of p5.js touches[] updated on each event
+  pinchActive:  false,
+  pinchStartDist:0,
+  wasPinch:     false,  // suppresses tap on finger-lift after a pinch
+  // Double-tap detection
+  lastTapTime:  0,
+  lastTapX:     0,
+  lastTapY:     0,
+  doubleTapThresh:    320,  // ms
+  doubleTapDistThresh: 50,  // px
+};
+
+// Current pinch distance between the first two touch points.
+function ptrGetPinchDist(){
+  if(Ptr.touches.length<2)return 0;
+  const dx=Ptr.touches[1].x-Ptr.touches[0].x,dy=Ptr.touches[1].y-Ptr.touches[0].y;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
+// ─── RIG ZOOM STATE ──────────────────────────────────────────────────────────
+// [TOUCH] Pinch-to-zoom adjusts rigZoom, which multiplies RS.rigScale.
+let rigZoom       = 1.0;
+let rigZoomTarget = 1.0;
+const RIG_ZOOM_MIN = 0.65;
+const RIG_ZOOM_MAX = 1.70;
+
+// TOTAL_SCALE = RS.rigScale * rigZoom — updated each frame in draw().
+// All rig drawing runs inside scale(TOTAL_SCALE); hit detection divides by it.
+let TOTAL_SCALE = 1.0;
+
+// ─── GLOBAL STATE ────────────────────────────────────────────────────────────
+const ST_IDLE=0,ST_PROX=1,ST_HOVER=2,ST_DRAG=3;
+const N_H=8,R_RIG=168,R_INNER=R_RIG*0.42,R_OUTER=R_RIG*1.58,N_BLOB=64,GLITCH_PROB=0.0022;
+const _blobCosT=new Float32Array(N_BLOB),_blobSinT=new Float32Array(N_BLOB),_attractorPool=[];
+
+let hudBtnHover={lang:0,theme:0,fs:0};
+let handles=[],organism,cursorTrail;
+let dragH=null,hShift=0,wobX=0,wobY=0;
+let rigDeployed=false,rigAlpha=0;
+let isDataLocked=false,currentActiveMenuIdx=-1;
+let activePage='',pageTransitionAlpha=255;
+let currentMockBlocks=[],expandedHandlesQueue=[],draggedBlock=null;
+let dragSubHandle=null,dragSubStartMx=0,dragSubStartMy=0,dragSubHasMoved=false;
+let gridPulseIntensity=0,textRevealMap={};
+let navZoneLerp=0,blobPushYLerp=0;
+let activeSectionHue=168,sessionStartTime=0,topHudHoverLerp=0;
+let onboardingDone=false,onboardingFrame=0;
+const ONBOARD_TOTAL=320;
+let globalCursorHover=false;
+let bottomMenuStates=[];
+let telemetryHUD={offsetX:0,offsetY:0,tgtOffsetX:0,tgtOffsetY:0,isDragging:false,dragStartX:0,dragStartY:0,fadeLerp:0,hoverLerp:0,inactivityTimer:0,activeH:null};
+
+// ─── RESPONSIVE HELPERS ──────────────────────────────────────────────────────
+// [RESPONSIVE] Returns mouse position in rig-local (unscaled) coordinates.
+// All hit detection against rig elements uses this, not raw mouseX/Y.
+function getRigMouse(){
+  return{
+    x:(mouseX-width/2-GlitchManager.ox-wobX)/TOTAL_SCALE,
+    y:(mouseY-height/2-GlitchManager.oy-wobY)/TOTAL_SCALE
+  };
+}
+
+// [RESPONSIVE] HUD button layout — wider tap zones on mobile.
+function getHudBtnLayout(){
+  const bW=RS.isMobile?44:40;
+  return{bW,X_FS:width-bW,X_THEME:width-bW*2,X_LANG:width-bW*3};
+}
+
+// [RESPONSIVE] Single canonical bottom-menu layout (removed duplicate).
+// subSpacing / subTopOffset are used consistently in draw AND hit detection.
+function getMenuLayout(){
+  const maxW=min(width*0.95,1200);
+  const colW=maxW/N_H;
+  const startX=(width-maxW)/2+(colW/2);
+  const startY=RS.menuY>0?RS.menuY:height-44;
+  const subSpacing=RS.isMobile?13:16;
+  const subTopOffset=RS.isMobile?16:20;
+  return{maxW,colW,startX,startY,subSpacing,subTopOffset};
+}
+
+// ─── MANAGERS ────────────────────────────────────────────────────────────────
+const GridEnergyManager={
+  ripples:[],
+  trigger(x,y,intensity=1.0,forcedColor=null){
+    const c=forcedColor||[activeSectionHue,30,isNightMode?90:60];
+    this.ripples.push({x,y,radius:0,life:1.0,speed:4*intensity,color:c});
+  },
+  update(){for(let i=this.ripples.length-1;i>=0;i--){const r=this.ripples[i];r.radius+=r.speed;r.life-=0.012;if(r.life<=0)this.ripples.splice(i,1);}}
+};
+const GlitchManager={
+  ox:0,oy:0,timer:0,
+  update(){
+    if(isNightMode&&this.timer<=0&&random()<GLITCH_PROB){this.timer=floor(random(5,19));const a=random(TWO_PI),m=random(3,9);this.ox=Math.cos(a)*m;this.oy=Math.sin(a)*m;}
+    if(this.timer>0){this.timer--;this.ox=lerp(this.ox,0,0.1)+random(-0.9,0.9);this.oy=lerp(this.oy,0,0.1)+random(-0.9,0.9);}
+    else{this.ox*=0.75;this.oy*=0.75;}
+  }
+};
+const PulseEngine={phase:0,update(){this.phase+=P.PULSE_FREQ*0.02+0.002;},getPulse(off,amp){return Math.sin(this.phase+off)*amp;}};
+const InteractionEngine={snapLerp:0,update(){this.snapLerp=lerp(this.snapLerp,0,0.2);}};
+
+class SpatialGrid{
+  constructor(cs){this.cs=cs;this.cells=new Map();this.results=[];}
+  clear(){for(const arr of this.cells.values())arr.length=0;}
+  _h(x,y){return`${Math.floor(x/this.cs)},${Math.floor(y/this.cs)}`;}
+  insert(b){const k=this._h(b.x+b.w/2,b.y+b.h/2);let a=this.cells.get(k);if(!a){a=[];this.cells.set(k,a);}a.push(b);}
+  getPotential(b){
+    this.results.length=0;
+    const col=Math.floor((b.x+b.w/2)/this.cs),row=Math.floor((b.y+b.h/2)/this.cs);
+    for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++){const a=this.cells.get(`${col+x},${row+y}`);if(a)for(let i=0;i<a.length;i++)this.results.push(a[i]);}
+    return this.results;
+  }
+}
+const globalGrid=new SpatialGrid(MOCK_MIN_DISTANCE+MOCK_PADDING);
+
+// ─── CLASS: CursorTrail ──────────────────────────────────────────────────────
+class CursorTrail{
+  constructor(){this.pts=[];this.spawnCd=0;this.alphaLerp=0;this.clickRipples=[];}
+  triggerClick(x,y){this.clickRipples.push({x,y,radius:0,life:1.0});}
+  update(){
+    this.alphaLerp=lerp(this.alphaLerp,rigDeployed?1:0,0.06);
+    const vx=mouseX-pmouseX,vy=mouseY-pmouseY,speed=Math.sqrt(vx*vx+vy*vy);
+    this.spawnCd--;
+    if(this.spawnCd<=0&&speed>0.8){this.spawnCd=Math.max(1,5-speed*0.22);this.pts.push({x:mouseX,y:mouseY,vx:vx*0.06,vy:vy*0.06,life:1.0,size:constrain(2+speed*0.16,2,7)});}
+    // [RESPONSIVE] Blob screen position accounts for TOTAL_SCALE
+    const bsx=width/2+(organism?organism.cx:0)*TOTAL_SCALE+GlitchManager.ox+wobX;
+    const bsy=height/2+(organism?organism.cy:0)*TOTAL_SCALE+GlitchManager.oy+wobY;
+    for(let i=this.pts.length-1;i>=0;i--){
+      const p=this.pts[i];p.life-=0.038;
+      const dx=bsx-p.x,dy=bsy-p.y,dSq=dx*dx+dy*dy;
+      if(dSq<40000){const d=Math.sqrt(dSq)+0.001,pull=constrain(map(d,0,200,0.9,0),0,0.9)*(1-navZoneLerp);if(pull>0.01){p.vx+=(dx/d)*pull*0.7;p.vy+=(dy/d)*pull*0.7;if(d<35)p.life-=0.12;}}
+      p.vx*=0.90;p.vy*=0.90;p.x+=p.vx;p.y+=p.vy;
+      if(p.life<=0)this.pts.splice(i,1);
+    }
+    for(let i=this.clickRipples.length-1;i>=0;i--){const r=this.clickRipples[i];r.radius+=2.5;r.life-=0.04;if(r.life<=0)this.clickRipples.splice(i,1);}
+  }
+  draw(){
+    const ba=1-this.alphaLerp*0.88;push();const tH=(hShift+128)%360;noFill();
+    if(ba>=0.02&&this.pts.length>=2){
+      for(let i=1;i<this.pts.length;i++){const p=this.pts[i],t=i/this.pts.length,pp=this.pts[i-1],a=Math.min(p.life,pp.life)*t*t*ba;stroke(getDynamicAccent(tH,a*100));strokeWeight(Math.min(p.size,pp.size)*a*0.45);line(pp.x,pp.y,p.x,p.y);}
+      noStroke();for(let i=0;i<this.pts.length;i++){const p=this.pts[i],t=i/this.pts.length,a=p.life*t*t*ba;fill(getDynamicAccent(tH,a*100));circle(p.x,p.y,p.size*a);}
+    }
+    for(const r of this.clickRipples){stroke(getDynamicAccent(activeSectionHue,r.life*100));strokeWeight(1.5);noFill();circle(r.x,r.y,r.radius*2);}
+    noStroke();
+    // On touch: hide system cursor dot (no pointer); on desktop: show it
+    if(!RS.isTouch){
+      fill(getDynamicAccent(activeSectionHue,100));circle(mouseX,mouseY,globalCursorHover?8:5);
+      if(globalCursorHover){noFill();stroke(getDynamicAccent(activeSectionHue,60));strokeWeight(1);circle(mouseX,mouseY,16);}
+    }
+    pop();
+  }
+}
+
+// ─── CLASS: SubHandle ────────────────────────────────────────────────────────
+class SubHandle{
+  constructor(parent,label,idx,total){
+    this.parent=parent;this.label=label;this.idx=idx;this.total=total;
+    this.pos=createVector(parent.pos.x,parent.pos.y);this.targetPos=createVector(0,0);
+    this.hovered=false;this.scaleLerp=1.0;this.deployProgress=0;
+    this.radialOffset=0;this.customRadius=ORBIT_CFG.RADIUS_BASE;
+    this.orbitAngle=parent.ang+(idx/total)*TWO_PI;this.orbitSpeed=0.0035+idx*0.0018;
+    this.isDragging=false;this.freeOffsetX=0;this.freeOffsetY=0;
+  }
+  update(){
+    this.deployProgress=lerp(this.deployProgress,1.0,0.045);
+    // [RESPONSIVE] Use rig-local mouse coords (divided by TOTAL_SCALE)
+    const rm=getRigMouse();const mx=rm.x,my=rm.y;
+    const dx=mx-this.pos.x,dy=my-this.pos.y;
+    // [TOUCH] Expanded hit radius on touch devices
+    const hitR=(12+RS.hitExtra*0.7)*this.scaleLerp;
+    this.hovered=(dx*dx+dy*dy)<(hitR*hitR);
+    if(this.hovered)globalCursorHover=true;
+    this.scaleLerp=lerp(this.scaleLerp,this.hovered?1.35:1.0,0.08);
+    let ri=expandedHandlesQueue.indexOf(this.parent);if(ri===-1)ri=expandedHandlesQueue.length;
+    this.radialOffset=lerp(this.radialOffset,ri*ORBIT_CFG.GROUP_PADDING,0.06);
+    const isActive=currentActiveMenuIdx===this.parent.idx;
+    const r=(this.customRadius+this.radialOffset)*this.deployProgress;
+    let bx=0,by=0;
+    if(isActive){const span=(this.total-1)*ORBIT_CFG.SPACING_ANGULAR,start=this.parent.ang-span/2,a=start+this.idx*ORBIT_CFG.SPACING_ANGULAR+ORBIT_CFG.OFFSET_ANGULAR;bx=this.parent.pos.x+Math.cos(a)*r;by=this.parent.pos.y+Math.sin(a)*r;}
+    else{if(!this.isDragging)this.orbitAngle+=this.orbitSpeed;bx=Math.cos(this.orbitAngle)*r;by=Math.sin(this.orbitAngle)*r;}
+    if(this.isDragging&&dragSubHasMoved){this.freeOffsetX=mx-bx;this.freeOffsetY=my-by;}
+    this.targetPos.set(bx+this.freeOffsetX,by+this.freeOffsetY);
+    const lsp=this.isDragging?0.25:(this.deployProgress>0.98?0.05:0.08);
+    this.pos.x=lerp(this.pos.x,this.targetPos.x,lsp);this.pos.y=lerp(this.pos.y,this.targetPos.y,lsp);
+  }
+  draw(hue,alpha){
+    push();drawingContext.globalAlpha=alpha/100;
+    const isActive=currentActiveMenuIdx===this.parent.idx,ox=isActive?this.parent.pos.x:0,oy=isActive?this.parent.pos.y:0;
+    if(this.isDragging){noFill();stroke(getDynamicAccent(hue,30));strokeWeight(0.55);circle(ox,oy,(this.customRadius+this.radialOffset)*this.deployProgress*2);}
+    stroke(getPremiumColor(this.hovered?'textActive':'border',80));strokeWeight(this.hovered?1.0:0.5);line(ox,oy,this.pos.x,this.pos.y);noStroke();
+    if(this.hovered){fill(getDynamicAccent(hue,25));circle(this.pos.x,this.pos.y,18*this.scaleLerp);}
+    fill(getDynamicAccent(hue,95));circle(this.pos.x,this.pos.y,(this.hovered?7:4.5)*this.scaleLerp);
+    fill(getPremiumColor(this.hovered?'textActive':'textMuted',100));
+    textAlign(CENTER,CENTER);textFont('monospace');textSize(this.hovered?8.5:7);
+    text(this.label,this.pos.x,this.pos.y+14*this.scaleLerp);pop();
+  }
+  triggerAction(){
+    if(this.idx===2&&this.parent.idx===7){resetToCenter();return;}
+    activePage=P_LABELS[this.parent.idx]+' // '+this.label;pageTransitionAlpha=0;gridPulseIntensity=1.0;
+    this.parent.energy=1.0;isDataLocked=(this.idx===0&&this.parent.idx===7);
+    generateMockBlocks(I18N['EN'].SUBS[this.parent.idx][this.idx],this.parent.idx,this);
+    organism.morphTo(this.label.charAt(0));GridEnergyManager.trigger(mouseX,mouseY,0.8);
+  }
+}
+
+// ─── CLASS: HandleNode ───────────────────────────────────────────────────────
+class HandleNode{
+  constructor(idx){
+    this.idx=idx;this.param=P_KEYS[idx];this.label=P_LABELS[idx];
+    this.ang=(idx/N_H)*TWO_PI-HALF_PI;this.hue=H_HUES[idx];this.mass=1.15;
+    this.pos=createVector(0,0);this.vel=createVector(0,0);this.acc=createVector(0,0);
+    this.state=ST_IDLE;this.energy=0;this.glow=0;this.hoverT=0;
+    this.dispR=11;this.neighE=0;this.alphaM=0;
+    this.value=P[this.param];this.dispVal=this.value;
+    this.trail=[];this.trailMax=26;this.isExpanded=false;this.subHandles=[];
+  }
+  toggleSubHandles(){
+    this.isExpanded=!this.isExpanded;const labels=SUB_MENU_MAP[this.idx];
+    this.subHandles=this.isExpanded?labels.map((l,i)=>new SubHandle(this,l,i,labels.length)):[];
+  }
+  encodedPosX(){return Math.cos(this.ang)*lerp(R_INNER,R_OUTER,this.value);}
+  encodedPosY(){return Math.sin(this.ang)*lerp(R_INNER,R_OUTER,this.value);}
+  applyMagneticForce(others){
+    if(this.state===ST_DRAG||!rigDeployed)return;
+    for(let i=0;i<others.length;i++){
+      const o=others[i];if(o===this)continue;
+      const dx=o.pos.x-this.pos.x,dy=o.pos.y-this.pos.y,dSq=dx*dx+dy*dy;
+      if(dSq<10000&&dSq>225){const invD=1/Math.sqrt(dSq),f=0.06*P.STIFFNESS;this.acc.x+=dx*invD*f;this.acc.y+=dy*invD*f;}
+    }
+  }
+  update(){
+    this.alphaM=lerp(this.alphaM,rigDeployed?100:0,0.15);
+    // [RESPONSIVE] Mouse in rig-local coordinates
+    const rm=getRigMouse();const mx=rm.x,my=rm.y;
+    const dx=mx-this.pos.x,dy=my-this.pos.y,dSq=dx*dx+dy*dy,s=0.85+P.MORPH_SPEED*0.3;
+    if(!rigDeployed){this.state=ST_IDLE;}
+    else if(this.state!==ST_DRAG){
+      // [TOUCH] Expanded hover radius on touch devices
+      const hoverR=(20+RS.hitExtra)*s;
+      if(dSq<hoverR*hoverR){this.state=ST_HOVER;globalCursorHover=true;}
+      else if(dSq<4624*s*s)this.state=ST_PROX;
+      else this.state=ST_IDLE;
+    }
+    const active=this.state===ST_HOVER||this.state===ST_DRAG;
+    this.hoverT=active?min(1,this.hoverT+0.028):this.hoverT*0.928;
+    const d=Math.sqrt(dSq);let eT=0.05;
+    if(this.state===ST_PROX)eT=map(d,68*s,20*s,0.1,0.55);
+    if(this.state===ST_HOVER)eT=0.84;if(this.state===ST_DRAG)eT=1.0;
+    eT=min(1,eT+this.neighE*0.38);this.neighE*=0.89;
+    this.energy=lerp(this.energy,eT,0.065);this.glow=lerp(this.glow,this.energy,0.08);
+    this.dispR=lerp(this.dispR,11+this.energy*9+Math.sin(frameCount*0.09+this.idx)*this.energy*1.8,0.1);
+    const kS=P.STIFFNESS*0.09+0.013,visc=P.LIQUID_VISCOSITY*0.16+0.022;
+    let tpx,tpy;
+    if(!rigDeployed){tpx=organism.cx;tpy=organism.cy;}
+    else if(this.state===ST_DRAG){tpx=mx;tpy=my;}
+    else{tpx=this.encodedPosX();tpy=this.encodedPosY();}
+    if(this.state===ST_DRAG){
+      this.pos.x=lerp(this.pos.x,tpx,0.42);this.pos.y=lerp(this.pos.y,tpy,0.42);
+      this.value=constrain(map(dist(0,0,this.pos.x,this.pos.y),R_INNER,R_OUTER,0,1),0,1);
+      P[this.param]=this.value;this.vel.set(0,0);
+    }else{
+      this.acc.add((tpx-this.pos.x)*kS/this.mass,(tpy-this.pos.y)*kS/this.mass);
+      if(rigDeployed){const pv=PulseEngine.getPulse(this.idx*TWO_PI/N_H,P.PULSE_AMP*5.5*0.06);this.acc.x+=Math.cos(this.ang)*pv;this.acc.y+=Math.sin(this.ang)*pv;}
+      this.vel.add(this.acc);this.vel.mult(1-visc);
+      if(this.vel.magSq()<0.0001)this.vel.set(0,0);
+      this.pos.add(this.vel);this.acc.set(0,0);
+    }
+    this.dispVal=lerp(this.dispVal,this.value,0.055);
+    this.trail.push(createVector(this.pos.x,this.pos.y));
+    if(this.trail.length>this.trailMax)this.trail.shift();
+    if(this.isExpanded)for(let i=0;i<this.subHandles.length;i++)this.subHandles[i].update();
+  }
+  draw(){
+    if(this.alphaM<1)return;
+    const h=this.hue,hDyn=(this.hue+hShift*0.08)%360;
+    push();drawingContext.globalAlpha=this.alphaM/100;
+    if(this.trail.length>3&&this.glow>0.07){
+      noFill();const spd=this.vel.mag();
+      for(let i=2;i<this.trail.length;i++){const t=i/this.trail.length;stroke(getDynamicAccent(hDyn,t*t*this.glow*50));strokeWeight((0.3+t*(1.3+spd*0.35))*this.glow);line(this.trail[i-1].x,this.trail[i-1].y,this.trail[i].x,this.trail[i].y);}
+    }
+    if(this.isExpanded)for(let i=0;i<this.subHandles.length;i++)this.subHandles[i].draw(h,this.alphaM);
+    noStroke();
+    for(let g=4;g>=1;g--){fill(getDynamicAccent(h,(5-g)*4*this.glow));circle(this.pos.x,this.pos.y,(this.dispR+g*7.5*this.glow)*2);}
+    fill(getDynamicAccent(h,86+this.energy*14));circle(this.pos.x,this.pos.y,this.dispR*2);
+    fill(getPremiumColor('panelBg'));circle(this.pos.x,this.pos.y,this.dispR*0.52);
+    if(this.glow>0.1){noFill();stroke(getDynamicAccent(h,this.glow*54));strokeWeight(1.2);arc(this.pos.x,this.pos.y,(this.dispR+5)*2,(this.dispR+5)*2,-HALF_PI,-HALF_PI+this.dispVal*TWO_PI);}
+    if(this.hoverT>0.1&&!this.isExpanded){
+      const pulse=(Math.sin(frameCount*0.14)+1)*0.5;noFill();stroke(getDynamicAccent(h,this.hoverT*pulse*28));strokeWeight(0.6);circle(this.pos.x,this.pos.y,(this.dispR+14)*2);
+      noStroke();fill(getPremiumColor('textActive'));textFont('monospace');textSize(7);textAlign(CENTER,CENTER);text('+',this.pos.x,this.pos.y+this.dispR+16);
+    }
+    // [RESPONSIVE] Label position scaled with rig
+    const ld=R_RIG+33+this.hoverT*11,lx=Math.cos(this.ang)*ld,ly=Math.sin(this.ang)*ld;
+    noStroke();textAlign(CENTER,CENTER);textFont('monospace');
+    fill(getPremiumColor(this.state===ST_HOVER?'textActive':'textMuted'));
+    textSize(RS.isMobile?6.5:7.5);text(this.label,lx,ly);
+    fill(getDynamicAccent(h,50+this.glow*40));textSize(RS.isMobile?5.5:6.5);text(nf(this.dispVal,1,2),lx,ly+11);
+    pop();
+  }
+  // [TOUCH] Contains check with extended hitExtra for touch ergonomics
+  contains(mx,my){
+    const dx=mx-this.pos.x,dy=my-this.pos.y;
+    const r=this.dispR+10+RS.hitExtra;
+    return(dx*dx+dy*dy)<r*r;
+  }
+}
+
+// ─── CLASS: Organism ─────────────────────────────────────────────────────────
+class Organism{
+  constructor(){
+    this.baseX=0;this.baseY=0;this.cx=0;this.cy=0;this.morphT=0;this.numLayers=8;this.layers=[];
+    this.aScale=100;this.energyLerp=0;this.cursorProx=0;
+    this.shapeSets={};
+    for(const c of Object.keys(GLYPH_PATHS))this.shapeSets[c]=buildOutlinePoints(N_BLOB,this.aScale,getNormalizedGlyph(c));
+    this.prevChar='O';this.targetChar='O';this.glyphMorphLerp=1.0;this.aPoints=this.shapeSets['O'];
+    this._eyeX=0;this._eyeY=0;
+    for(let l=0;l<this.numLayers;l++){
+      const verts=[],tgt=[];
+      for(let i=0;i<N_BLOB;i++){verts.push(createVector(this.aPoints[i].x,this.aPoints[i].y));tgt.push(createVector(this.aPoints[i].x,this.aPoints[i].y));}
+      this.layers.push({verts,tgt,noisePhase:random(1000),noiseAmp:2.5+l*1.5,layerScale:1.0+l*0.038});
+    }
+  }
+  morphTo(c){c=c.toUpperCase();if(!GLYPH_PATHS[c])c='O';if(c!==this.targetChar){this.prevChar=this.targetChar;this.targetChar=c;this.glyphMorphLerp=0;}}
+  avgHoverT(){let s=0;for(let i=0;i<handles.length;i++)s+=handles[i].hoverT;return s/N_H;}
+  avgEnergy(){let s=0;for(let i=0;i<handles.length;i++)s+=handles[i].energy;return s/N_H;}
+  _drawLatentEntity(prox,baseHue){
+    if(prox<0.04)return;
+    const t=this.morphT,mx=getRigMouse().x-this.cx,my=getRigMouse().y-this.cy;
+    this._eyeX=lerp(this._eyeX,mx*0.10*prox+(noise(t*1.3)-0.5)*9,0.06);
+    this._eyeY=lerp(this._eyeY,my*0.10*prox+(noise(t*1.3+77)-0.5)*9,0.06);
+    push();translate(this._eyeX,this._eyeY);noStroke();
+    for(let r=55;r>=5;r-=5){const frac=1-r/55;fill((baseHue+r*1.6)%360,lerp(28,72,frac),lerp(88,40,frac),prox*lerp(2,30,frac));circle(0,0,r*2);}
+    for(let i=0;i<22;i++){const a=i*(TWO_PI/22),nv=noise(Math.cos(a)*0.9+t*0.35,Math.sin(a)*0.9),r2=28+nv*18;stroke(baseHue,48,82,prox*17);strokeWeight(0.4);line(Math.cos(a)*12,Math.sin(a)*12,Math.cos(a)*r2,Math.sin(a)*r2);}
+    const pR=lerp(10,16,this.cursorProx)*prox;noStroke();fill(0,0,3,prox*85);circle(0,0,pR*2);fill(0,0,100,prox*55);circle(4,-4,5);fill(0,0,100,prox*28);circle(7,-7,2.5);
+    pop();
+  }
+  update(){
+    // [RESPONSIVE] All mouse refs go through getRigMouse()
+    const rm=getRigMouse();const mx=rm.x,my=rm.y;
+    if(!rigDeployed){this.baseX=lerp(this.baseX,mx,0.2);this.baseY=lerp(this.baseY,my,0.2);}
+    else{this.baseX=lerp(this.baseX,0,0.15);this.baseY=lerp(this.baseY,0,0.15);}
+    const t=frameCount*0.005,ht=this.avgHoverT(),drift=1+ht*0.5;
+    this.cx=this.baseX+(noise(t)-0.5)*32*drift;this.cy=this.baseY+blobPushYLerp+(noise(t+100)-0.5)*28*drift;
+    wobX=Math.sin(t*1.5)*6;wobY=Math.cos(t*1.2)*5;this.morphT+=P.MORPH_SPEED*0.004+0.001;
+    if(this.glyphMorphLerp<1.0){
+      this.glyphMorphLerp=min(1.0,this.glyphMorphLerp+0.015);
+      const eT=this.glyphMorphLerp<0.5?2*this.glyphMorphLerp**2:1-Math.pow(-2*this.glyphMorphLerp+2,2)/2;
+      this.aPoints=blendPoints(this.shapeSets[this.prevChar],this.shapeSets[this.targetChar],eT);
+    }
+    const dx=mx-this.cx,dy=my-this.cy,dSq=dx*dx+dy*dy;
+    this.cursorProx=lerp(this.cursorProx,dSq<19600?map(Math.sqrt(dSq),0,140,1,0):0,0.08);
+    if(this.cursorProx>0.1)globalCursorHover=true;
+    const pulse=PulseEngine.getPulse(0,P.PULSE_AMP*6);this.energyLerp=lerp(this.energyLerp,this.avgEnergy(),0.05);
+    const navScale=lerp(1.0,0.55,navZoneLerp),navCalm=lerp(1.0,0.40,navZoneLerp),reactScale=(1+this.energyLerp*0.30)*navScale;
+    _attractorPool.length=0;
+    for(let i=0;i<handles.length;i++){
+      const h=handles[i],str=h.state===ST_DRAG?2.5:h.isExpanded?1.8:h.energy;
+      if(str>0.05)_attractorPool.push({x:h.pos.x-this.cx,y:h.pos.y-this.cy,strength:str});
+      if(h.isExpanded)for(let j=0;j<h.subHandles.length;j++){const sh=h.subHandles[j];if(sh.isDragging||sh.hovered)_attractorPool.push({x:sh.pos.x-this.cx,y:sh.pos.y-this.cy,strength:sh.isDragging?3.0:1.5});}
+    }
+    for(let l=0;l<this.numLayers;l++){
+      const layer=this.layers[l],localTime=layer.noisePhase+this.morphT*(1-l*0.06),scale=layer.layerScale*reactScale;
+      const baseDX=(noise(this.morphT*0.2+l*6.7)-0.5)*4*navCalm,baseDY=(noise(this.morphT*0.2+l*6.7+47)-0.5)*4*navCalm;
+      const doNoise=l<3,doAttractors=l<7;
+      for(let i=0;i<N_BLOB;i++){
+        const ap=this.aPoints[i],apSq=ap.x*ap.x+ap.y*ap.y,aDist=apSq===0?0.001:Math.sqrt(apSq);
+        const nx=ap.x/aDist,ny=ap.y/aDist;
+        let disp=0;
+        if(doNoise){const nVal=noise(_blobCosT[i]*0.8+localTime,_blobSinT[i]*0.8+localTime*0.6+l*0.35);disp=map(nVal,0,1,-layer.noiseAmp,layer.noiseAmp)*navCalm;}
+        const ripple=this.cursorProx*Math.sin(frameCount*0.08+i*0.2+l*0.5)*2*navCalm;
+        let bx=ap.x*scale+nx*(disp+ripple)+baseDX,by=ap.y*scale+ny*(disp+ripple)+baseDY+pulse*(1-l*0.05);
+        let pullX=0,pullY=0;
+        if(doAttractors){
+          for(let j=0;j<_attractorPool.length;j++){
+            const ah=_attractorPool[j],adx=ah.x-bx,ady=ah.y-by,dSqAh=adx*adx+ady*ady,inflR=HANDLE_CFG.DEFORMATION_RADIUS*(1+ah.strength*0.05);
+            if(dSqAh<inflR*inflR){const d=Math.sqrt(dSqAh)+0.001,f=Math.pow((inflR-d)/inflR,3),force=f*ah.strength*HANDLE_CFG.INFLUENCE_STRENGTH*HANDLE_CFG.MASS_TRANSFER*(1-l*0.08);pullX+=(adx/d)*force;pullY+=(ady/d)*force;}
+          }
+        }
+        layer.tgt[i].set(bx+pullX,by+pullY);layer.verts[i].lerp(layer.tgt[i],HANDLE_CFG.ORGANIC_RESPONSE);
+      }
+    }
+  }
+  draw(){
+    const baseHue=(126+hShift)%360;push();translate(this.cx,this.cy);noStroke();
+    const rm=getRigMouse();const mx=rm.x,my=rm.y;
+    const dSq=(mx-this.cx)**2+(my-this.cy)**2;
+    const prox=dSq<62500?constrain(map(Math.sqrt(dSq),0,250,1,0),0,1):0;
+    for(let l=this.numLayers-1;l>=0;l--){
+      if(l===3)this._drawLatentEntity(prox,baseHue);
+      const layer=this.layers[l];
+      fill(getDynamicAccent(baseHue,map(l,0,this.numLayers-1,72,3)));
+      beginShape();const n=layer.verts.length;
+      for(let i=n-2;i<n;i++)curveVertex(layer.verts[i].x,layer.verts[i].y);
+      for(let i=0;i<n;i++)curveVertex(layer.verts[i].x,layer.verts[i].y);
+      for(let i=0;i<3;i++)curveVertex(layer.verts[i].x,layer.verts[i].y);
+      endShape();
+    }
+    pop();
+  }
+}
+
+// ─── SETUP ───────────────────────────────────────────────────────────────────
+function setup(){
+  createCanvas(windowWidth,windowHeight);
+  colorMode(HSB,360,100,100,100);
+  textFont('monospace');
+  noCursor();
+
+  // [RESPONSIVE] Compute RS metrics before anything else
+  updateResponsiveMetrics();
+
+  // [TOUCH] Ensure canvas handles touch itself (belt-and-suspenders with CSS)
+  const cnv=document.querySelector('canvas');
+  if(cnv){
+    cnv.style.touchAction='none';
+    cnv.style.webkitTapHighlightColor='transparent';
+    cnv.style.userSelect='none';
+    cnv.style.webkitUserSelect='none';
+  }
+  document.body.style.overscrollBehavior='none';
+
+  bottomMenuStates=Array.from({length:N_H},()=>({expanded:false,val:0,vel:0}));
+  sessionStartTime=millis();setLanguage('EN');
+  for(let i=0;i<N_BLOB;i++){const t=(i/N_BLOB)*TWO_PI;_blobCosT[i]=Math.cos(t);_blobSinT[i]=Math.sin(t);}
+  for(let i=0;i<N_H;i++)handles.push(new HandleNode(i));
+  organism=new Organism();cursorTrail=new CursorTrail();
+}
+
+// ─── DRAW ────────────────────────────────────────────────────────────────────
+function draw(){
+  globalCursorHover=false;
+
+  // [RESPONSIVE] Smooth pinch-zoom and update global TOTAL_SCALE
+  rigZoom=lerp(rigZoom,rigZoomTarget,0.08);
+  TOTAL_SCALE=RS.rigScale*rigZoom;
+
+  hShift=(hShift+0.032)%360;rigAlpha=lerp(rigAlpha,rigDeployed?1:0,0.1);
+  pageTransitionAlpha=min(255,pageTransitionAlpha+6);gridPulseIntensity=lerp(gridPulseIntensity,0,0.035);
+
+  // [RESPONSIVE] HUD button zones use responsive widths
+  const hbl=getHudBtnLayout();
+  hudBtnHover.lang  =lerp(hudBtnHover.lang,  (mouseY<=RS.hudH&&mouseX>=hbl.X_LANG &&mouseX<hbl.X_THEME)?1:0,0.15);
+  hudBtnHover.theme =lerp(hudBtnHover.theme, (mouseY<=RS.hudH&&mouseX>=hbl.X_THEME&&mouseX<hbl.X_FS)   ?1:0,0.15);
+  hudBtnHover.fs    =lerp(hudBtnHover.fs,    (mouseY<=RS.hudH&&mouseX>=hbl.X_FS  &&mouseX<=width)      ?1:0,0.15);
+  topHudHoverLerp   =lerp(topHudHoverLerp,   mouseY<=RS.hudH                                           ?1:0,0.10);
+
+  const _navEnter=navZoneLerp>0.5?100:130,_navTop=navZoneLerp>0.5?RS.hudH+6:RS.hudH+12;
+  const inNavZone=mouseY>height-_navEnter||mouseY<=_navTop;
+  navZoneLerp=lerp(navZoneLerp,inNavZone?1.0:0.0,0.06);
+  blobPushYLerp=lerp(blobPushYLerp,mouseY>height-_navEnter?-height*0.18:(mouseY<=_navTop?height*0.18:0),0.07);
+  activeSectionHue=lerp(activeSectionHue,currentActiveMenuIdx>=0?H_HUES[currentActiveMenuIdx]:168,0.015);
+
+  background(getPremiumColor('bg'));
+  updateBottomMenuPhysics();drawBackgroundDirectory();
+  PulseEngine.update();GlitchManager.update();InteractionEngine.update();GridEnergyManager.update();
+
+  // ── Rig block: scale(TOTAL_SCALE) makes all geometry scale uniformly ───
+  push();
+  translate(width/2+GlitchManager.ox+wobX,height/2+GlitchManager.oy+wobY);
+  scale(TOTAL_SCALE); // [RESPONSIVE] Single scale point — blob, handles, grid
+  drawNeuralGrid();organism.update();
+  for(let i=0;i<handles.length;i++){handles[i].applyMagneticForce(handles);handles[i].update();}
+  propagateEnergy();drawRigDecor();drawHandleLinks();organism.draw();
+  for(let i=0;i<handles.length;i++)handles[i].draw();
+  resolveBlockCollisions();updateAndDrawBlocks();
+  pop();
+  // ─────────────────────────────────────────────────────────────────────────
+
+  drawTelemetryHUD();drawSystemIcons();drawHUD();
+  if(!onboardingDone)drawOnboarding();
+  cursorTrail.update();cursorTrail.draw();
+}
+
+// ─── BOTTOM MENU PHYSICS ─────────────────────────────────────────────────────
+function updateBottomMenuPhysics(){
+  for(let i=0;i<bottomMenuStates.length;i++){
+    const st=bottomMenuStates[i];
+    const force=((st.expanded?1.0:0.0)-st.val)*0.22;
+    st.vel+=force;st.vel*=0.60;
+    if(Math.abs(st.vel)<0.0005)st.vel=0;
+    st.val+=st.vel;st.val=constrain(st.val,0,1);
+  }
+}
+
+// ─── NEURAL GRID ─────────────────────────────────────────────────────────────
+const _CORNER_SIGNS=[[-1,-1,1,1],[1,-1,-1,1],[-1,1,1,-1],[1,1,-1,-1]];
+function drawNeuralGrid(){
+  // [RESPONSIVE] Grid must cover the full screen even when TOTAL_SCALE < 1.
+  // Drawing runs inside scale(TOTAL_SCALE), so local coords are 1/TOTAL_SCALE
+  // larger than screen coords.  gridW/H map exactly to the screen edges.
+  const gridW=width /(2*TOTAL_SCALE);
+  const gridH=height/(2*TOTAL_SCALE);
+  const pBoost=gridPulseIntensity*12,sHue=activeSectionHue,step=38,stepM=step*5;
+  push();
+  stroke(getDynamicAccent(sHue,isNightMode?10+pBoost:20+pBoost));strokeWeight(0.4);
+  for(let x=-gridW+((-gridW)%step+step)%step;x<gridW;x+=step)line(x,-gridH,x,gridH);
+  for(let y=-gridH+((-gridH)%step+step)%step;y<gridH;y+=step)line(-gridW,y,gridW,y);
+  stroke(getDynamicAccent(sHue,isNightMode?30+pBoost:40+pBoost));strokeWeight(0.5);
+  for(let x=-gridW+((-gridW)%stepM+stepM)%stepM;x<gridW;x+=stepM)line(x,-gridH,x,gridH);
+  for(let y=-gridH+((-gridH)%stepM+stepM)%stepM;y<gridH;y+=stepM)line(-gridW,y,gridW,y);
+  stroke(getDynamicAccent(sHue,isNightMode?50+pBoost:60+pBoost));strokeWeight(0.7);
+  line(-gridW,0,gridW,0);line(0,-gridH,0,gridH);noFill();
+  // Rig rings stay at their logical radii (scale() already handles screen size)
+  const ringR=[R_RIG*0.55,R_RIG,R_RIG*1.62,R_RIG*2.3];
+  for(let i=0;i<ringR.length;i++){stroke(getDynamicAccent(sHue,(isNightMode?lerp(35,10,i/4):lerp(50,20,i/4))+pBoost*0.3));strokeWeight(i===1?0.8:0.4);circle(0,0,ringR[i]*2);}
+  stroke(getDynamicAccent(sHue,isNightMode?55:80));strokeWeight(0.7);
+  for(let i=0;i<4;i++){const a=i*HALF_PI,tk=8,rx=Math.cos(a)*R_RIG,ry=Math.sin(a)*R_RIG;line(rx-Math.cos(a)*tk,ry-Math.sin(a)*tk,rx+Math.cos(a)*tk,ry+Math.sin(a)*tk);}
+  const cOff=22,cLen=12;stroke(getDynamicAccent(sHue,isNightMode?55:80));strokeWeight(0.7);
+  for(let i=0;i<4;i++){
+    // [RESPONSIVE] Corner brackets at actual screen edges (scaled local coords)
+    const cx=_CORNER_SIGNS[i][0]*(gridW-cOff),cy=_CORNER_SIGNS[i][1]*(gridH-cOff),dx=_CORNER_SIGNS[i][2],dy=_CORNER_SIGNS[i][3];
+    line(cx,cy,cx+dx*cLen,cy);line(cx,cy,cx,cy+dy*cLen);noStroke();fill(getDynamicAccent(sHue,isNightMode?85:100));circle(cx,cy,3);stroke(getDynamicAccent(sHue,isNightMode?55:80));strokeWeight(0.7);
+  }
+  noFill();
+  for(let i=0;i<GridEnergyManager.ripples.length;i++){
+    const rp=GridEnergyManager.ripples[i];
+    const relX=(rp.x-(width/2+GlitchManager.ox+wobX))/TOTAL_SCALE;
+    const relY=(rp.y-(height/2+GlitchManager.oy+wobY))/TOTAL_SCALE;
+    stroke(getDynamicAccent(activeSectionHue,rp.life*100));strokeWeight(1.2*rp.life);circle(relX,relY,rp.radius/TOTAL_SCALE*2);
+    stroke(getDynamicAccent(activeSectionHue,rp.life*30));strokeWeight(0.5);circle(relX,relY,rp.radius/TOTAL_SCALE*2.8);
+  }
+  pop();
+}
+
+// ─── BACKGROUND DIRECTORY ────────────────────────────────────────────────────
+function drawBackgroundDirectory(){
+  push();textAlign(CENTER,TOP);textFont('monospace');
+  const lay=getMenuLayout();
+  for(let i=0;i<N_H;i++){
+    const isCurrent=i===currentActiveMenuIdx,st=bottomMenuStates[i],tx=lay.startX+i*lay.colW,hue=H_HUES[i];
+    const shiftY=lay.startY-(st.val*(SUB_MENU_MAP[i].length*lay.subSpacing+lay.subTopOffset));
+    const mainHover=mouseX>tx-lay.colW/2&&mouseX<tx+lay.colW/2&&mouseY>shiftY-15&&mouseY<shiftY+15;
+    if(mainHover)globalCursorHover=true;
+    if(textRevealMap['m'+i]===undefined)textRevealMap['m'+i]=0;
+    textRevealMap['m'+i]=lerp(textRevealMap['m'+i],mainHover?1:0,0.15);const revH=textRevealMap['m'+i];
+    const mAlpha=isCurrent?100:lerp(40,100,revH);
+    // [RESPONSIVE] Truncate label to fit narrow mobile columns
+    const dispLabel=truncLabel(P_LABELS[i],RS.labelMaxChars);
+    const hCol=isCurrent?color(hue,isNightMode?80:60,isNightMode?100:70,100):color(hue,lerp(0,60,revH),lerp(isNightMode?40:60,isNightMode?100:80,revH),mAlpha);
+    fill(hCol);noStroke();
+    if(isCurrent||revH>0.05)setTacticalGlow([hue,100,100],max(revH,isCurrent?1:0));else setTacticalGlow([0,0,0],0);
+    textSize(RS.menuFontSize);// [RESPONSIVE]
+    drawingContext.letterSpacing=RS.isMobile?'0px':'1px';
+    text(isCurrent?`[${dispLabel}]`:dispLabel,tx,shiftY);
+    drawingContext.letterSpacing='0px';
+    if(st.val>0.01){
+      const subs=SUB_MENU_MAP[i];
+      for(let j=0;j<subs.length;j++){
+        const ty=shiftY+lay.subTopOffset+j*lay.subSpacing;
+        const subAlpha=st.val*100,isAct=activePage.endsWith(subs[j]);
+        const subHover=mouseX>tx-lay.colW/2&&mouseX<tx+lay.colW/2&&mouseY>ty-8&&mouseY<ty+8;
+        if(subHover&&st.val>0.5)globalCursorHover=true;
+        const iKey=i+'_'+j;if(textRevealMap[iKey]===undefined)textRevealMap[iKey]=0;
+        textRevealMap[iKey]=lerp(textRevealMap[iKey],subHover?1:0,0.1);const revI=textRevealMap[iKey];
+        fill(color(hue,isAct?100:lerp(isAct?100:30,80,revI),isAct?100:lerp(isNightMode?40:60,100,revI),subAlpha*(isAct?1:lerp(0.5,1,revI))));
+        if(isAct||revI>0.05)setTacticalGlow([hue,100,100],max(revI,isAct?1:0));else setTacticalGlow([0,0,0],0);
+        const dispSub=truncLabel(subs[j],RS.labelMaxChars+2);
+        textSize(RS.subFontSize);// [RESPONSIVE]
+        text(`${isAct?'>>':(subHover?'>':' ')} ${dispSub}`,tx,ty);
+      }
+    }
+  }
+  pop();
+}
+
+// ─── HUD ─────────────────────────────────────────────────────────────────────
+function drawHUD(){
+  const elapsed=floor((millis()-sessionStartTime)/1000),timeStr=nf(floor(elapsed/60),2)+':'+nf(elapsed%60,2);
+  const nodeStr=currentActiveMenuIdx>=0?activePage:UI_STR.standby;
+  const H=RS.hudH;// [RESPONSIVE]
+  push();textFont('monospace');noStroke();
+  fill(getPremiumColor('bg',75+25*topHudHoverLerp));rect(0,0,width,H);
+  stroke(getPremiumColor('border',35+65*topHudHoverLerp));strokeWeight(0.6+0.4*topHudHoverLerp);line(0,H,width,H);noStroke();
+  fill(getPremiumColor('textActive',100));textSize(RS.isMobile?7:8.5);textAlign(LEFT,CENTER);drawingContext.letterSpacing='1.2px';text('APR_OS::V19.5',12,H/2);drawingContext.letterSpacing='0px';
+  stroke(getPremiumColor('border',40));strokeWeight(0.6);line(105,5,105,H-5);noStroke();
+  if(!RS.isMobile){
+    fill(getPremiumColor('textMuted',65+35*topHudHoverLerp));textSize(7.5);textAlign(LEFT,CENTER);text('RIG:'+(rigDeployed?UI_STR.deployed:UI_STR.standby),115,H/2);
+    stroke(getPremiumColor('border',30));strokeWeight(0.5);line(185,5,185,H-5);noStroke();
+  }
+  const infoX=RS.isMobile?115:195;
+  if(currentActiveMenuIdx>=0){fill(getDynamicAccent(H_HUES[currentActiveMenuIdx],85+15*topHudHoverLerp));textSize(RS.isMobile?7:8);textAlign(LEFT,CENTER);drawingContext.letterSpacing='0.8px';text('o '+nodeStr,infoX,H/2);drawingContext.letterSpacing='0px';}
+  else{fill(getPremiumColor('textMuted',60+40*topHudHoverLerp));textSize(RS.isMobile?7:8);textAlign(LEFT,CENTER);text(RS.isMobile?'> EXPLORE':UI_STR.explore,infoX,H/2);}
+  fill(getPremiumColor('textMuted',80));textSize(7.5);textAlign(RIGHT,CENTER);text((isDataLocked?UI_STR.lockOn:UI_STR.volatile)+' | T:'+timeStr,width-140,H/2);
+  const ledP=(Math.sin(frameCount*0.08)+1)*0.5;fill(getDynamicAccent(activeSectionHue,lerp(40,100,ledP)));circle(width-240,H/2,4);
+  pop();
+}
+
+// ─── SYSTEM ICONS ────────────────────────────────────────────────────────────
+function drawSystemIcons(){
+  // [RESPONSIVE] Button positions and widths from getHudBtnLayout()
+  const hbl=getHudBtnLayout();const{X_FS,X_THEME,X_LANG,bW}=hbl;
+  const H=RS.hudH,midY=H/2;
+  const hL=hudBtnHover.lang>0.5,hM=hudBtnHover.theme>0.5,hF=hudBtnHover.fs>0.5;
+  if(hL||hM||hF)globalCursorHover=true;
+  push();drawingContext.globalAlpha=1.0;noStroke();textFont('monospace');textAlign(CENTER,CENTER);textSize(10);
+  if(hL){fill(getDynamicAccent(activeSectionHue,20));rect(X_LANG,0,bW,H);}
+  if(hM){fill(getDynamicAccent(activeSectionHue,20));rect(X_THEME,0,bW,H);}
+  if(hF){fill(getDynamicAccent(activeSectionHue,20));rect(X_FS,0,bW,H);}
+  fill(hL?getDynamicAccent(activeSectionHue,100):getPremiumColor('textMuted',100));text(currentLang,X_LANG+bW/2,midY);
+  const tCol=hM?getDynamicAccent(activeSectionHue,100):getPremiumColor('textMuted',100),mxC=X_THEME+bW/2;
+  if(isNightMode){fill(tCol);beginShape();for(let k=0,a=HALF_PI;a>=-HALF_PI;a-=0.14,k++)vertex(mxC+Math.cos(a)*6.5,midY+Math.sin(a)*6.5);for(let a=-HALF_PI;a<=HALF_PI;a+=0.14)vertex(mxC+2+Math.cos(a)*4.5,midY+Math.sin(a)*6.5);endShape(CLOSE);}
+  else{noFill();stroke(tCol);strokeWeight(1.5);circle(mxC,midY,5);strokeWeight(1.2);for(let k=0;k<8;k++){const a=k*QUARTER_PI;line(mxC+Math.cos(a)*3.5,midY+Math.sin(a)*3.5,mxC+Math.cos(a)*6.5,midY+Math.sin(a)*6.5);}}
+  const fCol=hF?getDynamicAccent(activeSectionHue,100):getPremiumColor('textMuted',100),fxC=X_FS+bW/2,s=5;
+  stroke(fCol);strokeWeight(1.5);noFill();
+  if(!fullscreen()){line(fxC-s,midY-s,fxC-s+4,midY-s);line(fxC-s,midY-s,fxC-s,midY-s+4);line(fxC+s,midY-s,fxC+s-4,midY-s);line(fxC+s,midY-s,fxC+s,midY-s+4);line(fxC-s,midY+s,fxC-s+4,midY+s);line(fxC-s,midY+s,fxC-s,midY+s-4);line(fxC+s,midY+s,fxC+s-4,midY+s);line(fxC+s,midY+s,fxC+s,midY+s-4);}
+  else{line(fxC-s+4,midY-s,fxC-s+4,midY-s+4);line(fxC-s,midY-s+4,fxC-s+4,midY-s+4);line(fxC+s-4,midY-s,fxC+s-4,midY-s+4);line(fxC+s,midY-s+4,fxC+s-4,midY-s+4);line(fxC-s+4,midY+s,fxC-s+4,midY+s-4);line(fxC-s,midY+s-4,fxC-s+4,midY+s-4);line(fxC+s-4,midY+s,fxC+s-4,midY+s-4);line(fxC+s,midY+s-4,fxC+s-4,midY+s-4);}
+  pop();
+}
+
+// ─── TELEMETRY HUD ───────────────────────────────────────────────────────────
+function drawTelemetryHUD(){
+  const cH=dragH||handles.find(h=>h.isExpanded);if(cH)telemetryHUD.activeH=cH;if(!telemetryHUD.activeH)return;
+  telemetryHUD.offsetX=lerp(telemetryHUD.offsetX,telemetryHUD.tgtOffsetX,0.25);telemetryHUD.offsetY=lerp(telemetryHUD.offsetY,telemetryHUD.tgtOffsetY,0.25);
+  telemetryHUD.offsetX=constrain(telemetryHUD.offsetX,-width+300,20);telemetryHUD.offsetY=constrain(telemetryHUD.offsetY,-height/2+100,height/2-100);
+  const hudX=width-260+telemetryHUD.offsetX,hudY=height/2-80+telemetryHUD.offsetY,isHov=mouseX>=hudX&&mouseX<=hudX+240&&mouseY>=hudY&&mouseY<=hudY+120;
+  if(isHov)globalCursorHover=true;
+  if(cH||isHov||telemetryHUD.isDragging)telemetryHUD.inactivityTimer=180;else if(telemetryHUD.inactivityTimer>0)telemetryHUD.inactivityTimer--;
+  telemetryHUD.fadeLerp=lerp(telemetryHUD.fadeLerp,telemetryHUD.inactivityTimer>0?1.0:0.0,0.06);if(telemetryHUD.fadeLerp<0.01)return;
+  const keepZoom=isHov||telemetryHUD.isDragging||(cH&&(cH.isExpanded||cH.state===ST_DRAG));
+  telemetryHUD.hoverLerp=lerp(telemetryHUD.hoverLerp||0,keepZoom?1.0:0.0,0.18);
+  const tel=RIG_TELEMETRY[P_KEYS[telemetryHUD.activeH.idx]];if(!tel)return;
+  const focusA=100*telemetryHUD.fadeLerp,hColor=telemetryHUD.activeH.hue;
+  push();
+  // [RESPONSIVE] Handle screen position accounts for TOTAL_SCALE
+  const hx=width/2+telemetryHUD.activeH.pos.x*TOTAL_SCALE+GlitchManager.ox+wobX;
+  const hy=height/2+telemetryHUD.activeH.pos.y*TOTAL_SCALE+GlitchManager.oy+wobY;
+  stroke(getPremiumColor('border',40*telemetryHUD.fadeLerp));strokeWeight(0.5);drawingContext.setLineDash([3,3]);line(hx,hy,hudX,hy);line(hudX,hy,hudX,hudY);drawingContext.setLineDash([]);
+  translate(hudX,hudY);const cx=120,cy=60;translate(cx,cy);scale(1.0+0.05*telemetryHUD.hoverLerp);translate(-cx,-cy);
+  applyPremiumShadow(telemetryHUD.hoverLerp);
+  stroke(getPremiumColor('border',focusA));strokeWeight(1);fill(getPremiumColor('panelBg',focusA));rect(0,0,240,120,2);
+  drawingContext.shadowBlur=0;drawingContext.shadowOffsetY=0;noStroke();
+  fill(getDynamicAccent(hColor,focusA));rect(0,0,3,120,2,0,0,2);fill(getPremiumColor('grid',focusA));rect(3,0,237,14,0,2,0,0);
+  stroke(getPremiumColor('border',focusA));strokeWeight(1);line(0,14,240,14);noStroke();
+  fill(getPremiumColor('textMuted',focusA));textSize(6.5);textAlign(LEFT,TOP);text(`${UI_STR.sysNode} // ${tel.name}`,9,3);fill(getPremiumColor('textActive',focusA));
+  const valStr=nf(P[P_KEYS[telemetryHUD.activeH.idx]]*100,1,0)+'%',barLen=constrain(floor(map(P[P_KEYS[telemetryHUD.activeH.idx]],0,1,0,12)),0,12);
+  text(`> ${UI_STR.pwr}: ${valStr} [${'|'.repeat(barLen)}${'-'.repeat(12-barLen)}]`,9,20);
+  text(`> ${UI_STR.func}: ${tel.fn}\n> ${UI_STR.phys}: ${tel.phys}\n> ${UI_STR.zone}: ${tel.zone}\n> ${UI_STR.sync}: ${tel.syn}`,9,36);
+  pop();
+}
+
+// ─── ONBOARDING ──────────────────────────────────────────────────────────────
+function drawOnboarding(){
+  onboardingFrame++;if(onboardingFrame>ONBOARD_TOTAL||rigDeployed){onboardingDone=true;return;}
+  const t=onboardingFrame/ONBOARD_TOTAL;push();textFont('monospace');textAlign(CENTER,CENTER);
+  if(t<0.35){
+    const alpha=map(t,0,0.12,0,1,true)*map(t,0.25,0.35,1,0.85,true),pulse=(Math.sin(frameCount*0.09)+1)*0.5;
+    // [RESPONSIVE] Blob screen position uses TOTAL_SCALE
+    const bsx=width/2+(organism?organism.cx:0)*TOTAL_SCALE+GlitchManager.ox+wobX;
+    const bsy=height/2+(organism?organism.cy:0)*TOTAL_SCALE+GlitchManager.oy+wobY;
+    noFill();stroke(getDynamicAccent(activeSectionHue,alpha*(40+pulse*40)));strokeWeight(0.7);line(bsx,bsy+80,bsx,bsy+52);
+    noStroke();fill(getDynamicAccent(activeSectionHue,alpha*(60+pulse*40)));triangle(bsx-5,bsy+55,bsx+5,bsy+55,bsx,bsy+42);
+    // [TOUCH] Adapt hint text for touch vs pointer
+    fill(getPremiumColor('textActive',alpha*100));textSize(RS.isMobile?7.5:8.5);drawingContext.letterSpacing='2px';
+    text(RS.isTouch?'TAP · DRAG · PINCH':' CLICK · DRAG · EXPLORE',width/2,height*0.73);
+    drawingContext.letterSpacing='0px';fill(getPremiumColor('textMuted',alpha*80));textSize(7);drawingContext.letterSpacing='1px';
+    text(RS.isTouch?'DOUBLE-TAP HANDLES TO EXPAND':'DOUBLE-CLICK HANDLES TO EXPAND',width/2,height*0.77);
+  }
+  if(t>=0.35&&t<0.65){const alpha=map(t,0.35,0.65,1,0)*0.55;fill(getPremiumColor('textActive',alpha*100));textSize(RS.isMobile?7.5:8.5);drawingContext.letterSpacing='2px';text(RS.isTouch?'TAP · DRAG · PINCH':'CLICK · DRAG · EXPLORE',width/2,height*0.73);drawingContext.letterSpacing='0px';}
+  pop();
+}
+
+// ─── MOCK PANELS ─────────────────────────────────────────────────────────────
+function _calcPanelH(desc){return constrain(PANEL_HEADER_H+desc.split('\n').length*PANEL_LINE_H+PANEL_V_PAD,PANEL_H_MIN,120);}
+
+function generateMockBlocks(seedKey,handleIdx=-1,anchorSub=null){
+  const db=SECTION_DATABASE[seedKey]||I18N['EN'].DB[seedKey];
+  if(!db){currentMockBlocks.length=0;return;}
+  currentMockBlocks.length=0;const presets=db;
+  let anchorX=0,anchorY=0;
+  if(anchorSub){anchorX=anchorSub.pos.x;anchorY=anchorSub.pos.y;}
+  else if(handleIdx>=0&&handleIdx<handles.length){const h=handles[handleIdx],r=lerp(R_INNER,R_OUTER,h.value);anchorX=Math.cos(h.ang)*r;anchorY=Math.sin(h.ang)*r;}
+  const aDist=Math.sqrt(anchorX*anchorX+anchorY*anchorY)+0.001,radNx=anchorX/aDist,radNy=anchorY/aDist,perpNx=-radNy,perpNy=radNx;
+  const blockHue=handleIdx>=0?handles[handleIdx].hue:activeSectionHue;
+  for(let i=0;i<presets.length;i++){
+    const preset=presets[i],side=i===0?1:-1;
+    // Offsets are in rig-local (unscaled); scale() in draw() handles screen size
+    const offX=radNx*55+perpNx*side*35,offY=radNy*55+perpNy*side*35;
+    const pH=_calcPanelH(preset.d);
+    const lines=preset.d.split('\n').map(t=>({text:t,hoverLerp:0}));
+    currentMockBlocks.push({
+      x:constrain(anchorX+offX-PANEL_W_NORMAL/2,-width/(2*TOTAL_SCALE)+10,width/(2*TOTAL_SCALE)-PANEL_W_NORMAL-10),
+      y:constrain(anchorY+offY-pH/2,-height/(2*TOTAL_SCALE)+RS.hudH/TOTAL_SCALE+10,height/(2*TOTAL_SCALE)-pH-10),
+      w:PANEL_W_NORMAL,h:pH,hue:blockHue,
+      meta:preset.m,desc:preset.d,lines:lines,
+      life:PANEL_LIFE,birthDelay:i*28,birthFrame:frameCount,
+      hoverLerp:0,isPinned:false,pinLerp:0,focusLerp:1.0,
+      offsetX:0,offsetY:0,anchorSubHandle:anchorSub,
+      anchorOffsetX:offX-PANEL_W_NORMAL/2,anchorOffsetY:offY-pH/2,
+      tgtX:0,tgtY:0,isExpanded:false,expandLerp:0,
+      screenX:0,screenY:0,screenW:0,screenH:0,
+      closeScreenX:0,closeScreenY:0,closeScreenW:0,closeScreenH:0,
+      stabX:0,stabY:0,pullX:0,pullY:0,baseH:pH
+    });
+  }
+}
+
+function resolveBlockCollisions(){
+  if(currentMockBlocks.length<2)return;
+  const minD=MOCK_MIN_DISTANCE+MOCK_PADDING;
+  for(let iter=0;iter<MOCK_LAYOUT_ITERATIONS;iter++){
+    globalGrid.clear();for(let i=0;i<currentMockBlocks.length;i++)globalGrid.insert(currentMockBlocks[i]);
+    for(let i=0;i<currentMockBlocks.length;i++){
+      const a=currentMockBlocks[i];if(draggedBlock===a||a.isPinned)continue;
+      const aCx=a.x+a.w/2,aCy=a.y+a.h/2,blobD=Math.sqrt(aCx*aCx+aCy*aCy)+0.001;
+      if(blobD<95){const f=(95-blobD)/95*2.5;if(a.anchorSubHandle){a.anchorOffsetX+=(aCx/blobD)*f;a.anchorOffsetY+=(aCy/blobD)*f;}else{a.x+=(aCx/blobD)*f;a.y+=(aCy/blobD)*f;}}
+      const nb=globalGrid.getPotential(a);
+      for(let j=0;j<nb.length;j++){
+        const b=nb[j];if(a===b)continue;
+        const bCx=b.x+b.w/2,bCy=b.y+b.h/2,ddx=bCx-aCx,ddy=bCy-aCy,dSq=ddx*ddx+ddy*ddy;
+        if(dSq<minD*minD){const d=Math.sqrt(dSq)+0.001,psh=(minD-d)/minD*MOCK_REPULSION_FORCE*4,px=(ddx/d)*psh,py=(ddy/d)*psh;
+          if(draggedBlock!==a&&!a.isPinned){if(a.anchorSubHandle){a.anchorOffsetX-=px*0.55;a.anchorOffsetY-=py*0.55;}else{a.x-=px*0.55;a.y-=py*0.55;}}
+          if(draggedBlock!==b&&!b.isPinned){if(b.anchorSubHandle){b.anchorOffsetX+=px*0.55;b.anchorOffsetY+=py*0.55;}else{b.x+=px*0.55;b.y+=py*0.55;}}
+        }
+      }
+      if(a.anchorSubHandle){const MAX_OFF=90,odSq=a.anchorOffsetX**2+a.anchorOffsetY**2;if(odSq>MAX_OFF*MAX_OFF){const od=Math.sqrt(odSq);a.anchorOffsetX*=MAX_OFF/od;a.anchorOffsetY*=MAX_OFF/od;}a.anchorOffsetX*=0.998;a.anchorOffsetY*=0.998;}
+    }
+  }
+}
+
+function updateAndDrawBlocks(){
+  const alphaAlpha=map(pageTransitionAlpha,0,255,0,100,true);
+  const rigBaseX=width/2+GlitchManager.ox+wobX,rigBaseY=height/2+GlitchManager.oy+wobY;
+  // Mouse in rig-local coords for block hover detection
+  const mx=(mouseX-rigBaseX)/TOTAL_SCALE,my=(mouseY-rigBaseY)/TOTAL_SCALE;
+  // Rig-local safe bounds (local space — scale() handles screen mapping)
+  const lw=width/(2*TOTAL_SCALE),lh=height/(2*TOTAL_SCALE);
+  for(let i=currentMockBlocks.length-1;i>=0;i--){
+    const block=currentMockBlocks[i];if(!isDataLocked)block.life--;
+    if(block.life<=0){currentMockBlocks.splice(i,1);continue;}
+    if(draggedBlock===block){
+      block.x=lerp(block.x,block.tgtX,0.25);block.y=lerp(block.y,block.tgtY,0.25);
+      if(block.anchorSubHandle){const sh=block.anchorSubHandle;block.anchorOffsetX=block.x+block.w/2-sh.pos.x;block.anchorOffsetY=block.y+block.h/2-sh.pos.y;}
+    }else if(block.anchorSubHandle&&!block.isPinned){
+      const sh=block.anchorSubHandle,tx=sh.pos.x+block.anchorOffsetX-block.w/2,ty=sh.pos.y+block.anchorOffsetY-block.h/2;
+      block.x=lerp(block.x,tx,0.055);block.y=lerp(block.y,ty,0.055);
+    }
+    // [RESPONSIVE] Clamp in rig-local space
+    block.x=constrain(block.x,-lw+10,lw-block.w-10);
+    block.y=constrain(block.y,-lh+RS.hudH/TOTAL_SCALE+6,lh-block.h-RS.safeBottom/TOTAL_SCALE-10);
+    // Cap panel width to avoid overflow on very small screens
+    const maxPW=max(140,width/TOTAL_SCALE-20);
+    block.expandLerp=lerp(block.expandLerp,block.isExpanded?1:0,0.15);
+    block.w=min(lerp(PANEL_W_NORMAL,PANEL_W_EXPANDED,block.expandLerp),maxPW);
+    block.h=lerp(block.baseH,PANEL_H_EXPANDED,block.expandLerp);
+    block.stabX=-(wobX+GlitchManager.ox)*(block.hoverLerp||0);block.stabY=-(wobY+GlitchManager.oy)*(block.hoverLerp||0);
+    const cxB=block.x+block.w/2,cyB=block.y+block.h/2,ddx=mx-cxB,ddy=my-cyB;
+    block.pullX=0;block.pullY=0;
+    if(draggedBlock!==block){block.pullX=constrain(ddx*0.12,-18,18)*(block.hoverLerp||0)+constrain(ddx*0.15,-25,25)*(block.pinLerp||0);block.pullY=constrain(ddy*0.12,-18,18)*(block.hoverLerp||0)+constrain(ddy*0.15,-25,25)*(block.pinLerp||0);}
+    const scaleFactor=1.0+0.40*(block.hoverLerp||0)+0.80*(block.pinLerp||0);
+    // [RESPONSIVE] Screen coords multiply local by TOTAL_SCALE
+    const localSX=block.stabX+block.pullX+cxB+(block.x-cxB)*scaleFactor;
+    const localSY=block.stabY+block.pullY+cyB+(block.y-cyB)*scaleFactor;
+    block.screenX=rigBaseX+localSX*TOTAL_SCALE;
+    block.screenY=rigBaseY+localSY*TOTAL_SCALE;
+    block.screenW=block.w*scaleFactor*TOTAL_SCALE;
+    block.screenH=block.h*scaleFactor*TOTAL_SCALE;
+    block.closeScreenW=22*scaleFactor*TOTAL_SCALE;
+    block.closeScreenH=PANEL_HEADER_H*scaleFactor*TOTAL_SCALE;
+    block.closeScreenX=block.screenX+block.screenW-block.closeScreenW;
+    block.closeScreenY=block.screenY;
+    const isHovered=mouseX>=block.screenX&&mouseX<=block.screenX+block.screenW&&mouseY>=block.screenY&&mouseY<=block.screenY+block.screenH;
+    if(isHovered)globalCursorHover=true;
+    if(!isHovered&&block.isPinned&&draggedBlock!==block)block.isPinned=false;
+    block.hoverLerp=lerp(block.hoverLerp||0,isHovered?1:0,0.18);
+    block.pinLerp=lerp(block.pinLerp||0,block.isPinned?1:0,0.12);
+    block.focusLerp=lerp(block.focusLerp||0,(isHovered||block.isPinned||draggedBlock===block)?1.0:0.35,0.1);
+  }
+  currentMockBlocks.sort((a,b)=>((a.hoverLerp||0)+(a.pinLerp||0)*2)-((b.hoverLerp||0)+(b.pinLerp||0)*2));
+  // Bezier connectors
+  for(let i=0;i<currentMockBlocks.length;i++){
+    const block=currentMockBlocks[i];if(!block.anchorSubHandle)continue;
+    const age=frameCount-block.birthFrame-block.birthDelay;if(age<0)continue;
+    const birthA=constrain(map(age,0,35,0,1),0,1),decayA=isDataLocked?1:constrain(map(block.life,0,180,0,1),0,1);
+    const baseA=alphaAlpha*decayA*birthA*(block.focusLerp||0);if(baseA<1)continue;
+    const sh=block.anchorSubHandle,bx=block.x+block.w/2,by=block.y+block.h/2;
+    push();noFill();
+    const cp1x=sh.pos.x+(bx-sh.pos.x)*0.35+(by-sh.pos.y)*0.18,cp1y=sh.pos.y+(by-sh.pos.y)*0.35-(bx-sh.pos.x)*0.18;
+    const cp2x=bx-(bx-sh.pos.x)*0.35+(by-sh.pos.y)*0.12,cp2y=by-(by-sh.pos.y)*0.35-(bx-sh.pos.x)*0.12;
+    stroke(getDynamicAccent(block.hue,baseA*lerp(28,55,block.hoverLerp)));strokeWeight(lerp(0.5,1.0,block.hoverLerp));
+    bezier(sh.pos.x,sh.pos.y,cp1x,cp1y,cp2x,cp2y,bx,by);
+    noStroke();fill(getDynamicAccent(block.hue,baseA*100));circle(bezierPoint(sh.pos.x,cp1x,cp2x,bx,0.5),bezierPoint(sh.pos.y,cp1y,cp2y,by,0.5),lerp(2.5,4.5,block.hoverLerp));
+    pop();
+  }
+  // Panel rendering
+  for(let i=0;i<currentMockBlocks.length;i++){
+    const block=currentMockBlocks[i];
+    const age=frameCount-block.birthFrame-block.birthDelay;if(age<0)continue;
+    const birthA=constrain(map(age,0,35,0,1),0,1),decayA=isDataLocked?1:constrain(map(block.life,0,180,0,1),0,1);
+    const focusA=alphaAlpha*birthA*decayA*(block.focusLerp||0),hcl=Math.max(block.hoverLerp||0,block.pinLerp||0),finalA=focusA*lerp(1.0,1.4,hcl);
+    push();
+    translate(block.stabX+block.pullX,block.stabY+block.pullY);
+    const cxB=block.x+block.w/2,cyB=block.y+block.h/2;translate(cxB,cyB);scale(1.0+0.40*(block.hoverLerp||0)+0.80*(block.pinLerp||0));translate(-cxB,-cyB);
+    if(block.focusLerp>0.5)applyPremiumShadow(block.focusLerp);
+    stroke(getPremiumColor('border',finalA));strokeWeight(1);fill(getPremiumColor('panelBg',finalA));rect(block.x,block.y,block.w,block.h,0);
+    drawingContext.shadowBlur=0;drawingContext.shadowOffsetY=0;noStroke();
+    fill(getDynamicAccent(block.hue,finalA));rect(block.x,block.y,3,block.h,0);
+    fill(getPremiumColor('grid',finalA));rect(block.x+3,block.y,block.w-3,PANEL_HEADER_H,0);
+    stroke(getPremiumColor('border',finalA));strokeWeight(0.7);line(block.x,block.y+PANEL_HEADER_H,block.x+block.w,block.y+PANEL_HEADER_H);noStroke();
+    const rawMeta=block.meta.replace(/\/\/\s*(NODE|SYS|NET):\s*/g,'').replace('//','').trim();
+    fill(getPremiumColor('textMuted',finalA));textSize(6.5);textAlign(LEFT,CENTER);text('.'+rawMeta,block.x+8,block.y+PANEL_HEADER_H/2);
+    fill(getDynamicAccent(block.hue,finalA));circle(block.x+block.w-8,block.y+PANEL_HEADER_H/2,lerp(3,4,hcl));
+    if(block.isExpanded||block.expandLerp>0.2){
+      const closeAlpha=block.expandLerp;
+      // Close button hover check uses screen coords
+      const cHov=mouseX>=block.closeScreenX&&mouseX<=block.closeScreenX+block.closeScreenW&&mouseY>=block.closeScreenY&&mouseY<=block.closeScreenY+block.closeScreenH;
+      if(cHov)globalCursorHover=true;
+      fill(getPremiumColor(cHov?'textActive':'textMuted',finalA*closeAlpha));textSize(6);textAlign(RIGHT,CENTER);text(UI_STR.closePanel,block.x+block.w-14,block.y+PANEL_HEADER_H/2);
+    }
+    let yOff=block.y+PANEL_HEADER_H+7;
+    for(let li=0;li<block.lines.length;li++){
+      const ln=block.lines[li];
+      const lineScreenY=block.screenY+(yOff-block.y)*((block.screenH||1)/(block.h||1));
+      const lHov=block.isExpanded&&mouseX>=block.screenX&&mouseX<=block.screenX+block.screenW&&mouseY>=lineScreenY&&mouseY<=lineScreenY+PANEL_LINE_H*(block.screenH/block.h);
+      ln.hoverLerp=lerp(ln.hoverLerp,lHov?1:0,0.2);if(lHov)globalCursorHover=true;
+      push();translate(block.x+9,yOff);scale(1.0+0.06*ln.hoverLerp);
+      const anyH=block.lines.some(l=>l.hoverLerp>0.5),tA=(lHov?1.0:(anyH?0.4:0.85))*finalA;
+      fill(getPremiumColor(lHov?'textActive':'textMuted',tA));textSize(9);textAlign(LEFT,TOP);text(ln.text,0,0);pop();
+      yOff+=PANEL_LINE_H;
+    }
+    if(!isDataLocked){
+      const lifeRatio=block.life/PANEL_LIFE;
+      noStroke();fill(getDynamicAccent(block.hue,finalA*lifeRatio*25));
+      rect(block.x+3,block.y+block.h-2,Math.max(0,(block.w-3)*lifeRatio),2,0);
+    }
+    const cS=5;stroke(getPremiumColor('textMuted',finalA*lerp(0.2,0.55,hcl)));strokeWeight(0.7);
+    line(block.x,block.y+block.h-cS,block.x,block.y+block.h);line(block.x,block.y+block.h,block.x+cS,block.y+block.h);
+    line(block.x+block.w,block.y+block.h-cS,block.x+block.w,block.y+block.h);line(block.x+block.w,block.y+block.h,block.x+block.w-cS,block.y+block.h);
+    noStroke();pop();
+  }
+}
+
+// ─── RIG UTILITIES ────────────────────────────────────────────────────────────
+function propagateEnergy(){
+  for(let i=0;i<handles.length;i++){const h=handles[i];if(h.energy>0.22){const gain=(h.energy-0.22)/(P.STIFFNESS*1.5+0.25)*0.35,t1=handles[(i-1+N_H)%N_H],t2=handles[(i+1+N_H)%N_H];t1.neighE=max(t1.neighE,gain*0.28);t2.neighE=max(t2.neighE,gain*0.28);}}
+}
+function drawRigDecor(){
+  if(rigAlpha<0.01)return;push();drawingContext.globalAlpha=rigAlpha;noFill();
+  for(let r=0;r<3;r++){stroke(getDynamicAccent(activeSectionHue,15+r*10));strokeWeight(r===1?0.9:0.4);circle(0,0,(R_RIG+r*1.5)*2);}
+  pop();
+}
+function drawHandleLinks(){
+  if(rigAlpha<0.01)return;push();drawingContext.globalAlpha=rigAlpha;
+  for(let i=0;i<handles.length;i++){const h1=handles[i],h2=handles[(i+1)%N_H],e=(h1.energy+h2.energy)*0.5;if(e<0.07)continue;noFill();stroke(getDynamicAccent(H_HUES[i],e*100));strokeWeight(0.7);bezier(h1.pos.x,h1.pos.y,0,0,0,0,h2.pos.x,h2.pos.y);}
+  pop();
+}
+
+function resetToCenter(){
+  isDataLocked=false;currentActiveMenuIdx=-1;activePage='';pageTransitionAlpha=0;gridPulseIntensity=0.55;
+  currentMockBlocks.length=0;expandedHandlesQueue.length=0;textRevealMap={};
+  organism.morphTo('O');
+  for(let i=0;i<handles.length;i++){const h=handles[i];h.value=P_INIT[h.param];P[h.param]=h.value;h.energy=0.9;h.isExpanded=false;h.subHandles=[];}
+  bottomMenuStates.forEach(s=>{s.expanded=false;});
+}
+
+// ─── UNIFIED INPUT HANDLERS ──────────────────────────────────────────────────
+// All actual interaction logic lives here; mouse/touch wrappers delegate to these.
+
+function _handlePointerDown(){
+  onboardingDone=true;
+  cursorTrail.triggerClick(mouseX,mouseY);
+  const hbl=getHudBtnLayout();
+
+  // Top HUD buttons
+  if(mouseY<=RS.hudH&&mouseX>=hbl.X_LANG){
+    if(mouseX<hbl.X_THEME)setLanguage(currentLang==='EN'?'ES':'EN');
+    else if(mouseX<hbl.X_FS)isNightMode=!isNightMode;
+    else{try{fullscreen(!fullscreen());}catch(e){}}
+    GridEnergyManager.trigger(mouseX,mouseY,1.5);return;
+  }
+
+  // Telemetry HUD drag handle
+  if(telemetryHUD.fadeLerp>0.5){
+    const hudX=width-260+telemetryHUD.offsetX,hudY=height/2-80+telemetryHUD.offsetY;
+    if(mouseX>=hudX&&mouseX<=hudX+240&&mouseY>=hudY&&mouseY<=hudY+120){
+      telemetryHUD.isDragging=true;telemetryHUD.dragStartX=mouseX-telemetryHUD.tgtOffsetX;telemetryHUD.dragStartY=mouseY-telemetryHUD.tgtOffsetY;
+      GridEnergyManager.trigger(mouseX,mouseY,0.8);return;
+    }
+  }
+
+  // Panel close buttons
+  for(let i=0;i<currentMockBlocks.length;i++){
+    const block=currentMockBlocks[i];if(!block.isExpanded)continue;
+    if(mouseX>=block.closeScreenX&&mouseX<=block.closeScreenX+block.closeScreenW&&mouseY>=block.closeScreenY&&mouseY<=block.closeScreenY+block.closeScreenH){
+      block.isExpanded=false;block.isPinned=false;GridEnergyManager.trigger(mouseX,mouseY,0.5);return;
+    }
+  }
+
+  // Panel drag pickup
+  for(let i=currentMockBlocks.length-1;i>=0;i--){
+    if(draggedBlock)break;const block=currentMockBlocks[i];
+    if(mouseX>=block.screenX&&mouseX<=block.screenX+block.screenW&&mouseY>=block.screenY&&mouseY<=block.screenY+block.screenH){
+      draggedBlock=block;block.isPinned=true;draggedBlock.tgtX=block.x;draggedBlock.tgtY=block.y;
+      draggedBlock.dragOffsetX=block.screenX-mouseX;draggedBlock.dragOffsetY=block.screenY-mouseY;
+    }
+  }
+  if(draggedBlock){
+    for(let i=0;i<currentMockBlocks.length;i++){if(currentMockBlocks[i]!==draggedBlock)currentMockBlocks[i].isPinned=false;}
+    GridEnergyManager.trigger(mouseX,mouseY,1.0);return;
+  }
+
+  // Rig-local coords for everything below
+  const rm=getRigMouse();const mouseTransX=rm.x,mouseTransY=rm.y;
+
+  // Sub-handle touch/click
+  if(rigDeployed){
+    for(let i=0;i<handles.length;i++){
+      const h=handles[i];if(!h.isExpanded)continue;
+      for(let j=0;j<h.subHandles.length;j++){
+        const s=h.subHandles[j],dx=mouseTransX-s.pos.x,dy=mouseTransY-s.pos.y;
+        // [TOUCH] Extended sub-handle hit radius
+        const subHitR=(14+RS.hitExtra*0.7)*s.scaleLerp;
+        if((dx*dx+dy*dy)<subHitR*subHitR){
+          dragSubHandle=s;dragSubStartMx=mouseTransX;dragSubStartMy=mouseTransY;
+          dragSubHasMoved=false;s.isDragging=true;GridEnergyManager.trigger(mouseX,mouseY,0.8);return;
+        }
+      }
+    }
+  }
+
+  // Bottom directory menu
+  const layout=getMenuLayout();
+  for(let i=0;i<N_H;i++){
+    const tx=layout.startX+i*layout.colW,st=bottomMenuStates[i];
+    const shiftY=layout.startY-(st.val*(SUB_MENU_MAP[i].length*layout.subSpacing+layout.subTopOffset));
+    // [TOUCH] Extended vertical hit zone
+    const mainHitV=15+RS.hitExtra*0.4;
+    if(mouseX>tx-layout.colW/2&&mouseX<tx+layout.colW/2&&mouseY>shiftY-mainHitV&&mouseY<shiftY+mainHitV){
+      bottomMenuStates.forEach((s,idx)=>{if(idx!==i)s.expanded=false;});
+      st.expanded=!st.expanded;GridEnergyManager.trigger(mouseX,mouseY,1.2);return;
+    }
+    if(st.val>0.5){
+      const subs=SUB_MENU_MAP[i];
+      for(let j=0;j<subs.length;j++){
+        const ty=shiftY+layout.subTopOffset+j*layout.subSpacing;
+        const subHitV=8+RS.hitExtra*0.35;
+        if(mouseX>tx-layout.colW/2&&mouseX<tx+layout.colW/2&&mouseY>ty-subHitV&&mouseY<ty+subHitV){
+          activePage=P_LABELS[i]+' // '+subs[j];currentActiveMenuIdx=i;
+          GridEnergyManager.trigger(mouseX,mouseY,1.5);
+          pageTransitionAlpha=0;gridPulseIntensity=1.0;isDataLocked=(i===7&&j===0);rigDeployed=true;
+          const tgt=handles[i];
+          if(!tgt.isExpanded){tgt.toggleSubHandles();expandedHandlesQueue.push(tgt);if(expandedHandlesQueue.length>3)expandedHandlesQueue.shift().toggleSubHandles();}
+          tgt.energy=1.0;handles[(i-1+N_H)%N_H].neighE=max(handles[(i-1+N_H)%N_H].neighE,0.28);handles[(i+1+N_H)%N_H].neighE=max(handles[(i+1+N_H)%N_H].neighE,0.28);
+          let matchSub=null;if(tgt.isExpanded)for(let k=0;k<tgt.subHandles.length;k++){if(tgt.subHandles[k].label===subs[j]){matchSub=tgt.subHandles[k];break;}}
+          generateMockBlocks(resolveDbKey(subs[j])||I18N['EN'].SUBS[i][j],i,matchSub);
+          organism.morphTo(subs[j].charAt(0));return;
+        }
+      }
+    }
+  }
+
+  // Deploy rig on first click anywhere
+  if(!rigDeployed){
+    rigDeployed=true;for(let i=0;i<handles.length;i++)handles[i].energy=0.85;
+    GridEnergyManager.trigger(mouseX,mouseY,2.0);return;
+  }
+
+  // Handle drag start
+  for(let i=0;i<handles.length;i++){
+    const h=handles[i];
+    if(h.contains(mouseTransX,mouseTransY)){h.state=ST_DRAG;dragH=h;GridEnergyManager.trigger(mouseX,mouseY,0.8);return;}
+  }
+
+  // Click blob center → collapse rig
+  const collapseR=65;
+  const dx=mouseTransX-organism.cx,dy=mouseTransY-organism.cy;
+  if((dx*dx+dy*dy)<collapseR*collapseR){rigDeployed=false;expandedHandlesQueue.length=0;resetToCenter();}
+}
+
+function _handlePointerMove(){
+  if(telemetryHUD.isDragging){
+    telemetryHUD.tgtOffsetX=mouseX-telemetryHUD.dragStartX;telemetryHUD.tgtOffsetY=mouseY-telemetryHUD.dragStartY;return;
+  }
+  if(dragSubHandle){
+    // Movement check in rig-local space
+    const rm=getRigMouse();
+    const dx=rm.x-dragSubStartMx,dy=rm.y-dragSubStartMy;
+    if((dx*dx+dy*dy)>49)dragSubHasMoved=true;return;
+  }
+  if(draggedBlock){
+    const tSX=mouseX+draggedBlock.dragOffsetX,tSY=mouseY+draggedBlock.dragOffsetY;
+    const rigBaseX=width/2+GlitchManager.ox+wobX,rigBaseY=height/2+GlitchManager.oy+wobY;
+    const sf=1.0+0.40*(draggedBlock.hoverLerp||0)+0.80*(draggedBlock.pinLerp||0);
+    const cxB=draggedBlock.x+draggedBlock.w/2,cyB=draggedBlock.y+draggedBlock.h/2;
+    // Convert screen target to rig-local, accounting for TOTAL_SCALE
+    draggedBlock.tgtX=((tSX-rigBaseX)/TOTAL_SCALE-draggedBlock.stabX-draggedBlock.pullX-cxB)/sf+cxB;
+    draggedBlock.tgtY=((tSY-rigBaseY)/TOTAL_SCALE-draggedBlock.stabY-draggedBlock.pullY-cyB)/sf+cyB;return;
+  }
+  if(dragH)dragH.state=ST_DRAG;
+}
+
+function _handlePointerEnd(){
+  if(telemetryHUD.isDragging){telemetryHUD.isDragging=false;return;}
+  if(dragSubHandle){
+    dragSubHandle.isDragging=false;
+    if(!dragSubHasMoved)dragSubHandle.triggerAction();
+    dragSubHandle=null;return;
+  }
+  if(draggedBlock)GridEnergyManager.trigger(mouseX,mouseY,0.8);
+  draggedBlock=null;
+  if(dragH){dragH.state=ST_IDLE;dragH=null;}
+}
+
+function _handlePointerDoubleTap(){
+  onboardingDone=true;
+  // Double-click / double-tap on panels
+  for(let i=currentMockBlocks.length-1;i>=0;i--){
+    const b=currentMockBlocks[i];
+    if(mouseX>=b.screenX&&mouseX<=b.screenX+b.screenW&&mouseY>=b.screenY&&mouseY<=b.screenY+b.screenH){
+      b.isExpanded=!b.isExpanded;b.isPinned=true;
+      for(let j=0;j<currentMockBlocks.length;j++){if(currentMockBlocks[j]!==b)currentMockBlocks[j].isPinned=false;}
+      GridEnergyManager.trigger(mouseX,mouseY,1.0);return;
+    }
+  }
+  // Double on handles → toggle sub-handles
+  const rm=getRigMouse();const mx=rm.x,my=rm.y;
+  for(let i=0;i<handles.length;i++){
+    const h=handles[i];
+    if(h.contains(mx,my)){
+      if(!h.isExpanded){h.toggleSubHandles();expandedHandlesQueue.push(h);if(expandedHandlesQueue.length>3)expandedHandlesQueue.shift().toggleSubHandles();currentActiveMenuIdx=h.idx;}
+      else{h.toggleSubHandles();for(let k=expandedHandlesQueue.length-1;k>=0;k--){if(expandedHandlesQueue[k]===h)expandedHandlesQueue.splice(k,1);}currentActiveMenuIdx=-1;}
+      organism.morphTo(h.label.charAt(0));GridEnergyManager.trigger(mouseX,mouseY,1.2);return;
+    }
+  }
+}
+
+// ─── MOUSE HANDLERS (desktop wrappers) ───────────────────────────────────────
+function mousePressed(){
+  if(Ptr.isTouch)return;// [TOUCH] Handled by touchStarted
+  Ptr.dragStartX=mouseX;Ptr.dragStartY=mouseY;Ptr.dragTotalDist=0;Ptr.isDragging=false;
+  _handlePointerDown();
+}
+function mouseDragged(){
+  if(Ptr.isTouch)return;
+  _handlePointerMove();
+}
+function mouseReleased(){
+  if(Ptr.isTouch)return;
+  _handlePointerEnd();
+}
+function doubleClicked(){
+  if(Ptr.isTouch)return;// [TOUCH] Handled by double-tap in touchEnded
+  _handlePointerDoubleTap();
+}
+
+// ─── TOUCH HANDLERS ──────────────────────────────────────────────────────────
+// p5.js sets mouseX/mouseY to touches[0].x/y automatically, so the shared
+// _handlePointer* functions work without modification.
+
+function touchStarted(){
+  Ptr.isTouch=true;
+  Ptr.touches=touches?[...touches]:[];
+  Ptr.dragStartX=mouseX;Ptr.dragStartY=mouseY;
+  Ptr.dragTotalDist=0;Ptr.isDragging=false;
+
+  if(Ptr.touches.length>=2){
+    // Two fingers → start pinch, cancel any active single-finger drag
+    Ptr.pinchActive=true;Ptr.wasPinch=true;
+    Ptr.pinchStartDist=ptrGetPinchDist();
+    if(dragH){dragH.state=ST_IDLE;dragH=null;}
+    draggedBlock=null;
+    if(dragSubHandle){dragSubHandle.isDragging=false;dragSubHandle=null;}
+    return false;// Prevent default
+  }
+
+  // Single touch → treat like mouse press
+  Ptr.pinchActive=false;
+  _handlePointerDown();
+  return false;// Prevent browser scroll and zoom
+}
+
+function touchMoved(){
+  Ptr.isTouch=true;
+  Ptr.touches=touches?[...touches]:[];
+
+  if(Ptr.touches.length>=2&&Ptr.pinchActive){
+    // [TOUCH] Pinch-to-zoom: incremental scale update
+    const newDist=ptrGetPinchDist();
+    if(Ptr.pinchStartDist>10&&newDist>10){
+      rigZoomTarget=constrain(rigZoomTarget*(newDist/Ptr.pinchStartDist),RIG_ZOOM_MIN,RIG_ZOOM_MAX);
+    }
+    Ptr.pinchStartDist=ptrGetPinchDist();// reset for next incremental step
+    return false;
+  }
+
+  const d=dist(mouseX,mouseY,Ptr.dragStartX,Ptr.dragStartY);
+  Ptr.dragTotalDist=d;
+  if(d>RS.tapThresh){
+    Ptr.isDragging=true;
+    _handlePointerMove();
+  }
+  return false;
+}
+
+function touchEnded(){
+  Ptr.isTouch=true;
+  Ptr.touches=touches?[...touches]:[];
+  if(Ptr.touches.length<2)Ptr.pinchActive=false;
+
+  if(Ptr.touches.length===0){
+    // All fingers lifted
+    if(!Ptr.wasPinch&&!Ptr.isDragging){
+      // It was a tap — check for double-tap
+      const now=millis();
+      const tapDist=dist(mouseX,mouseY,Ptr.lastTapX,Ptr.lastTapY);
+      if(now-Ptr.lastTapTime<Ptr.doubleTapThresh&&tapDist<Ptr.doubleTapDistThresh){
+        Ptr.lastTapTime=0;
+        _handlePointerEnd();// clean drag state first
+        _handlePointerDoubleTap();
+      }else{
+        Ptr.lastTapTime=now;Ptr.lastTapX=mouseX;Ptr.lastTapY=mouseY;
+        _handlePointerEnd();
+      }
+    }else{
+      _handlePointerEnd();
+    }
+    Ptr.isDragging=false;Ptr.wasPinch=false;
+  }else{
+    // One finger still down — end the lifted finger's drag
+    _handlePointerEnd();
+    Ptr.dragStartX=mouseX;Ptr.dragStartY=mouseY;
+    Ptr.dragTotalDist=0;Ptr.isDragging=false;
+  }
+  return false;
+}
+
+// ─── WINDOW RESIZE ───────────────────────────────────────────────────────────
+function windowResized(){
+  resizeCanvas(windowWidth,windowHeight);
+  // [RESPONSIVE] Recompute all metrics for the new viewport
+  updateResponsiveMetrics();
+  // Immediately update TOTAL_SCALE so the block clamping below uses the right values
+  TOTAL_SCALE=RS.rigScale*rigZoom;
+  const lw=width/(2*TOTAL_SCALE),lh=height/(2*TOTAL_SCALE);
+  // Re-clamp any panels that might have drifted outside the new viewport
+  for(let i=0;i<currentMockBlocks.length;i++){
+    const b=currentMockBlocks[i];
+    b.x=constrain(b.x,-lw+10,lw-b.w-10);
+    b.y=constrain(b.y,-lh+RS.hudH/TOTAL_SCALE+10,lh-b.h-10);
+    if(b.anchorSubHandle){b.anchorOffsetX=constrain(b.anchorOffsetX,-80,80);b.anchorOffsetY=constrain(b.anchorOffsetY,-80,80);}
+  }
+}
+</script>
+</body>
+</html>
